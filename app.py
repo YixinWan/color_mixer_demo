@@ -257,13 +257,17 @@ for name, rgb in paint_colors.items():
         st.markdown(f"<div style='width:20px;height:20px;background:rgb{tuple(rgb)}'></div>", unsafe_allow_html=True)
     with cols_side[1]:
         if st.button(name, key=f"btn_{name}"):
-            if "user_colors" not in st.session_state or not isinstance(st.session_state.user_colors, dict):
-                st.session_state.user_colors = {}
-            if "active_colors" not in st.session_state or not isinstance(st.session_state.active_colors, dict):
-                st.session_state.active_colors = {}
-            if name not in st.session_state.user_colors:
-                st.session_state.user_colors[name] = rgb
-            st.session_state.active_colors[name] = rgb
+            user_colors = st.session_state.get("user_colors")
+            if not isinstance(user_colors, dict):
+                user_colors = {}
+            if name not in user_colors:
+                user_colors[name] = rgb
+            st.session_state["user_colors"] = user_colors
+            active_colors = st.session_state.get("active_colors")
+            if not isinstance(active_colors, dict):
+                active_colors = {}
+            active_colors[name] = rgb
+            st.session_state["active_colors"] = active_colors
             st.experimental_rerun()  # 点击立即刷新页面
 
 # -----------------------------
