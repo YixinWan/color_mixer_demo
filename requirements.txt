@@ -1,1 +1,7 @@
+streamlit
+tqdm
+numpy
+Pillow
+scipy
+scikit-image
 streamlit-drawable-canvas
