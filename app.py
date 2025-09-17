@@ -46,10 +46,12 @@ with btn_cols[1]:
         if os.path.exists("my_palette.json"):
             with open("my_palette.json", "r", encoding="utf-8") as f:
                 loaded = json.load(f)
-            st.session_state.active_colors = loaded
-            # 修复云端 AttributeError: 'user_colors' 可能未初始化或非 dict
+            # 先确保 user_colors/active_colors 都已初始化
+            if "active_colors" not in st.session_state or not isinstance(st.session_state.active_colors, dict):
+                st.session_state.active_colors = {}
             if "user_colors" not in st.session_state or not isinstance(st.session_state.user_colors, dict):
                 st.session_state.user_colors = {}
+            st.session_state.active_colors = loaded
             st.session_state.user_colors.update(loaded)
             st.experimental_rerun()
         else:
