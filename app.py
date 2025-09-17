@@ -259,6 +259,9 @@ for name, rgb in paint_colors.items():
         st.markdown(f"<div style='width:20px;height:20px;background:rgb{tuple(rgb)}'></div>", unsafe_allow_html=True)
     with cols_side[1]:
         if st.button(name, key=f"btn_{name}"):
+            # 确保 user_colors 已初始化为 dict
+            if "user_colors" not in st.session_state or not isinstance(st.session_state.user_colors, dict):
+                st.session_state.user_colors = {}
             if name not in st.session_state.user_colors:
                 st.session_state.user_colors[name] = rgb
             st.session_state.active_colors[name] = rgb
