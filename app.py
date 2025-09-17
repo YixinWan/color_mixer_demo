@@ -58,6 +58,11 @@ with btn_cols[1]:
             st.warning("my_palette.json 文件不存在")
 with btn_cols[2]:
     if st.button("🧹 清空"):
+        # rerun前确保active_colors和user_colors都已初始化为dict
+        if "active_colors" not in st.session_state or not isinstance(st.session_state.active_colors, dict):
+            st.session_state.active_colors = {}
+        if "user_colors" not in st.session_state or not isinstance(st.session_state.user_colors, dict):
+            st.session_state.user_colors = {}
         st.session_state.active_colors = {}
         st.experimental_rerun()
 
