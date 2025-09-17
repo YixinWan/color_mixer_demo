@@ -1,7 +1,6 @@
-streamlit==1.24.0
-tqdm
+streamlit>=1.24
 numpy
-Pillow
-scipy
-scikit-image
+pillow
 streamlit-drawable-canvas
+scikit-image
+scipy
