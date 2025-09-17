@@ -7,12 +7,13 @@ import json
 import os
 
 # -----------------------------
-# 初始化 session_state
 # -----------------------------
-if "user_colors" not in st.session_state:
-    st.session_state.user_colors = {}  # 已选择的颜料
-if "active_colors" not in st.session_state:
-    st.session_state.active_colors = {}  # 当前调色盘显示
+# 初始化 session_state（强制类型校验，防止云端 rerun 丢失/类型错乱）
+# -----------------------------
+if "user_colors" not in st.session_state or not isinstance(st.session_state.get("user_colors"), dict):
+    st.session_state.user_colors = {}
+if "active_colors" not in st.session_state or not isinstance(st.session_state.get("active_colors"), dict):
+    st.session_state.active_colors = {}
 
 # -----------------------------
 # 载入官方油画颜料色库
@@ -46,11 +47,6 @@ with btn_cols[1]:
         if os.path.exists("my_palette.json"):
             with open("my_palette.json", "r", encoding="utf-8") as f:
                 loaded = json.load(f)
-            # 先确保 user_colors/active_colors 都已初始化
-            if "active_colors" not in st.session_state or not isinstance(st.session_state.active_colors, dict):
-                st.session_state.active_colors = {}
-            if "user_colors" not in st.session_state or not isinstance(st.session_state.user_colors, dict):
-                st.session_state.user_colors = {}
             st.session_state.active_colors = loaded
             st.session_state.user_colors.update(loaded)
             st.experimental_rerun()
@@ -58,11 +54,6 @@ with btn_cols[1]:
             st.warning("my_palette.json 文件不存在")
 with btn_cols[2]:
     if st.button("🧹 清空"):
-        # rerun前确保active_colors和user_colors都已初始化为dict
-        if "active_colors" not in st.session_state or not isinstance(st.session_state.active_colors, dict):
-            st.session_state.active_colors = {}
-        if "user_colors" not in st.session_state or not isinstance(st.session_state.user_colors, dict):
-            st.session_state.user_colors = {}
         st.session_state.active_colors = {}
         st.experimental_rerun()
 
@@ -266,11 +257,6 @@ for name, rgb in paint_colors.items():
         st.markdown(f"<div style='width:20px;height:20px;background:rgb{tuple(rgb)}'></div>", unsafe_allow_html=True)
     with cols_side[1]:
         if st.button(name, key=f"btn_{name}"):
-            # rerun前确保active_colors和user_colors都已初始化为dict
-            if "active_colors" not in st.session_state or not isinstance(st.session_state.active_colors, dict):
-                st.session_state.active_colors = {}
-            if "user_colors" not in st.session_state or not isinstance(st.session_state.user_colors, dict):
-                st.session_state.user_colors = {}
             if name not in st.session_state.user_colors:
                 st.session_state.user_colors[name] = rgb
             st.session_state.active_colors[name] = rgb
