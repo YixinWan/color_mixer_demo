@@ -9,6 +9,7 @@ from scipy.optimize import minimize
 import itertools
 import base64
 from io import BytesIO
+import hashlib
 
 # -----------------------------
 # 初始化 session_state
@@ -17,6 +18,12 @@ if "user_colors" not in st.session_state or not isinstance(st.session_state.get(
     st.session_state.user_colors = {}
 if "active_colors" not in st.session_state or not isinstance(st.session_state.get("active_colors"), dict):
     st.session_state.active_colors = {}
+if "uploaded_image" not in st.session_state:
+    st.session_state.uploaded_image = None
+if "canvas_image" not in st.session_state:
+    st.session_state.canvas_image = None
+if "image_hash" not in st.session_state:
+    st.session_state.image_hash = None
 
 # -----------------------------
 # 载入官方油画颜料色库
@@ -26,14 +33,20 @@ with open(data_path, "r", encoding="utf-8") as f:
     paint_colors = json.load(f)
 
 # -----------------------------
-# 辅助函数：将PIL图片转换为base64格式
+# 辅助函数
 # -----------------------------
-def pil_to_base64(img):
-    """将PIL图片转换为base64字符串"""
-    buffer = BytesIO()
-    img.save(buffer, format="PNG")
-    img_str = base64.b64encode(buffer.getvalue()).decode()
-    return f"data:image/png;base64,{img_str}"
+def get_image_hash(file_content):
+    """生成文件内容的哈希值"""
+    return hashlib.md5(file_content).hexdigest()
+
+def create_canvas_image(img, canvas_width):
+    """创建用于画布的图片"""
+    canvas_height = int(img.height * canvas_width / img.width)
+    max_height = 1500
+    if canvas_height > max_height:
+        canvas_height = max_height
+        canvas_width = int(img.width * canvas_height / img.height)
+    return img.resize((canvas_width, canvas_height)), canvas_width, canvas_height
 
 # -----------------------------
 # 页面布局
@@ -94,53 +107,86 @@ if st.session_state.active_colors:
 else:
     st.write("当前色库为空")
 
-
 st.markdown("---")
+
 # -----------------------------
 st.header("📤 上传图片")
 uploaded_file = st.file_uploader("请选择图片文件", type=["png", "jpg", "jpeg"])
+
 if uploaded_file:
-    img = Image.open(uploaded_file).convert("RGB")
+    # 读取文件内容并生成哈希
+    file_content = uploaded_file.read()
+    current_hash = get_image_hash(file_content)
+    
+    # 如果是新图片或图片发生变化，重新加载
+    if (st.session_state.image_hash != current_hash or 
+        st.session_state.uploaded_image is None):
+        
+        uploaded_file.seek(0)  # 重置文件指针
+        st.session_state.uploaded_image = Image.open(uploaded_file).convert("RGB")
+        st.session_state.image_hash = current_hash
+        # 清理旧的画布图片缓存
+        st.session_state.canvas_image = None
+    
+    img = st.session_state.uploaded_image
     
     # 显示原始图片信息
     st.write(f"图片尺寸：{img.width} × {img.height} 像素")
 
-    canvas_width = st.slider("取色画布宽度", min_value=200, max_value=2400, value=600)
-    canvas_height = int(img.height * canvas_width / img.width)
+    # 使用稳定的key避免slider变化导致的问题
+    canvas_width = st.slider(
+        "取色画布宽度", 
+        min_value=200, 
+        max_value=2400, 
+        value=min(600, img.width),
+        key="canvas_width_slider"
+    )
     
-    # 限制画布高度，防止过高
-    max_height = 1500
-    if canvas_height > max_height:
-        canvas_height = max_height
-        canvas_width = int(img.width * canvas_height / img.height)
+    # 创建画布图片
+    img_resized, actual_width, canvas_height = create_canvas_image(img, canvas_width)
     
-    img_resized = img.resize((canvas_width, canvas_height))
-    
-    # 将图片转换为base64格式
-    img_base64 = pil_to_base64(img_resized)
+    # 缓存调整后的图片，避免重复调整大小
+    cache_key = f"{current_hash}_{actual_width}_{canvas_height}"
+    if (st.session_state.canvas_image is None or 
+        getattr(st.session_state, 'canvas_cache_key', None) != cache_key):
+        st.session_state.canvas_image = img_resized
+        st.session_state.canvas_cache_key = cache_key
     
     st.subheader("🎯 取色画布")
     
-    # 创建一个唯一的key来确保画布重新渲染
-    canvas_key = f"canvas_{canvas_width}_{canvas_height}_{uploaded_file.name}"
+    # 使用稳定的key，基于图片哈希而不是文件名
+    canvas_key = f"canvas_{current_hash[:8]}_{actual_width}_{canvas_height}"
     
-    canvas_result = st_canvas(
-        fill_color="rgba(255, 165, 0, 0.3)",
-        stroke_width=2,
-        stroke_color="#ff0000",
-        background_image=img_resized,  # 直接使用PIL图片对象
-        update_streamlit=True,
-        height=canvas_height,
-        width=canvas_width,
-        drawing_mode="point",
-        point_display_radius=3,
-        key=canvas_key,
-    )
+    # 添加重置画布按钮，用于解决显示问题
+    col1, col2 = st.columns([1, 10])
+    with col1:
+        if st.button("🔄", help="重置画布显示", key="reset_canvas"):
+            st.rerun()
+    with col2:
+        st.markdown("💡 如果画布显示异常，可点击左侧的重置按钮")
+    
+    try:
+        canvas_result = st_canvas(
+            fill_color="rgba(255, 165, 0, 0.3)",
+            stroke_width=2,
+            stroke_color="#ff0000",
+            background_image=st.session_state.canvas_image,
+            update_streamlit=True,
+            height=canvas_height,
+            width=actual_width,
+            drawing_mode="point",
+            point_display_radius=3,
+            key=canvas_key,
+        )
+    except Exception as e:
+        st.error("画布显示出现问题，请尝试点击重置按钮或重新上传图片")
+        st.write(f"错误详情: {str(e)}")
+        canvas_result = None
 
     st.markdown("<div style='color:#fa8c16;font-size:16px;margin:8px 0 0 0;'><b>提示：</b>点击画布任意位置即可取色</div>", unsafe_allow_html=True)
 
     st.header("🎯 取色结果")
-    if canvas_result.json_data and "objects" in canvas_result.json_data:
+    if canvas_result and canvas_result.json_data and "objects" in canvas_result.json_data:
         objects = canvas_result.json_data["objects"]
         if objects:
             # 获取最后一个点击点的坐标
@@ -148,7 +194,7 @@ if uploaded_file:
             x, y = round(last_point["left"]), round(last_point["top"])
             
             # 将画布坐标转换为原图坐标
-            x_img = round(x * img.width / canvas_width)
+            x_img = round(x * img.width / actual_width)
             y_img = round(y * img.height / canvas_height)
             
             # 确保坐标在图片范围内
@@ -284,7 +330,7 @@ if uploaded_file:
                         unsafe_allow_html=True
                     )
     else:
-        st.info("👆 请在右侧画布上点击任意位置进行取色")
+        st.info("👆 请在画布上点击任意位置进行取色")
 
 # -----------------------------
 # 侧边栏颜料选择
