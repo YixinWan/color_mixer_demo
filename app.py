@@ -48,7 +48,7 @@ def create_canvas_image(img, canvas_width):
         canvas_width = int(img.width * canvas_height / img.height)
     return img.resize((canvas_width, canvas_height)), canvas_width, canvas_height
 
-@st.cache_data(show_spinner=False)
+@st.cache_data
 def process_uploaded_image(file_content, canvas_width, file_hash):
     """处理上传的图片，返回原图和调整后的画布图片"""
     img = Image.open(BytesIO(file_content)).convert("RGB")
@@ -64,16 +64,6 @@ def process_uploaded_image(file_content, canvas_width, file_hash):
     canvas_img = img.resize((canvas_width, canvas_height))
     
     return img, canvas_img, canvas_width, canvas_height
-
-@st.cache_data(show_spinner=False)
-def img_to_base64(img, width, height):
-    """将PIL图片转换为base64字符串，专门用于云端兼容"""
-    img_resized = img.resize((width, height))
-    buffer = BytesIO()
-    # 使用PNG格式确保兼容性，并设置较低的压缩级别
-    img_resized.save(buffer, format="PNG", compress_level=1)
-    img_base64 = base64.b64encode(buffer.getvalue()).decode()
-    return f"data:image/png;base64,{img_base64}"
 
 # -----------------------------
 # 页面布局
@@ -154,133 +144,60 @@ if uploaded_file:
     canvas_width = st.slider(
         "取色画布宽度", 
         min_value=200, 
-        max_value=1200, 
+        max_value=2400, 
         value=min(600, temp_img.width),
         key="canvas_width_slider"
     )
     
-    # 使用缓存函数处理图片
+    # 使用缓存函数处理图片，传入canvas_width作为缓存参数
     img, canvas_img, actual_width, canvas_height = process_uploaded_image(file_content, canvas_width, current_hash)
     
     st.subheader("🎯 取色画布")
     
-    # 云端兼容性检测和多重方案
-    st.info("🔄 正在加载取色画布...")
+    # 使用包含尺寸信息的key，确保slider变化时canvas正确更新
+    canvas_key = f"canvas_{current_hash[:8]}_{actual_width}_{canvas_height}"
     
-    # 方案选择器
-    canvas_mode = st.radio(
-        "选择画布模式（如果默认模式无法显示图片，请选择兼容模式）:",
-        ["默认模式", "兼容模式", "手动取色模式"],
-        key="canvas_mode"
-    )
-    
-    if canvas_mode == "默认模式":
-        # 使用包含尺寸信息的key
-        canvas_key = f"canvas_default_{current_hash[:8]}_{actual_width}_{canvas_height}"
-        
-        # 重置按钮
-        if st.button("🔄 重置画布", key="reset_default"):
+    # 添加重置画布按钮
+    col1, col2 = st.columns([1, 10])
+    with col1:
+        if st.button("🔄", help="重置画布显示", key="reset_canvas"):
+            # 清理相关缓存
+            process_uploaded_image.clear()
             st.rerun()
+    with col2:
+        st.markdown("💡如果画布显示异常，可点击左侧的重置按钮")
+    
+    try:
+        canvas_result = st_canvas(
+            fill_color="rgba(255, 165, 0, 0.3)",
+            stroke_width=2,
+            stroke_color="#ff0000",
+            background_image=canvas_img,
+            update_streamlit=True,
+            height=canvas_height,
+            width=actual_width,
+            drawing_mode="point",
+            point_display_radius=3,
+            key=canvas_key,
+        )
+    except Exception as e:
+        st.error(f"画布创建失败: {str(e)}")
+        st.info("使用备用方案...")
         
-        try:
-            canvas_result = st_canvas(
-                fill_color="rgba(255, 165, 0, 0.3)",
-                stroke_width=2,
-                stroke_color="#ff0000",
-                background_image=canvas_img,
-                update_streamlit=True,
-                height=canvas_height,
-                width=actual_width,
-                drawing_mode="point",
-                point_display_radius=3,
-                key=canvas_key,
-            )
-        except Exception as e:
-            st.error(f"默认模式失败: {str(e)}")
-            canvas_result = None
-            
-    elif canvas_mode == "兼容模式":
-        # 尝试不同的兼容性方案
-        st.write("使用兼容模式，适合云端环境...")
+        # 备用方案：显示图片供参考
+        st.subheader("📷 参考图片")
+        st.image(canvas_img, caption="请参考此图片，使用下方手动输入坐标取色", width=actual_width)
         
-        # 显示参考图片
-        st.image(canvas_img, caption="参考图片", width=actual_width)
+        # 手动输入坐标
+        st.subheader("📍 手动输入取色坐标")
+        coord_col1, coord_col2 = st.columns(2)
+        with coord_col1:
+            manual_x = st.number_input("X坐标", min_value=0, max_value=actual_width-1, value=actual_width//2, key="manual_x")
+        with coord_col2:
+            manual_y = st.number_input("Y坐标", min_value=0, max_value=canvas_height-1, value=canvas_height//2, key="manual_y")
         
-        # 创建空白画布，用户可以在上面点击
-        canvas_key = f"canvas_compat_{current_hash[:8]}_{actual_width}_{canvas_height}"
-        
-        # 尝试使用base64背景
-        try:
-            img_base64 = img_to_base64(img, actual_width, canvas_height)
-            
-            # 显示提示
-            st.markdown("**在下方画布上点击取色（背景可能不可见，但功能正常）:**")
-            
-            canvas_result = st_canvas(
-                fill_color="rgba(255, 165, 0, 0.8)",  # 增加透明度便于看到点击位置
-                stroke_width=3,
-                stroke_color="#ff0000",
-                background_image=None,  # 不设置背景，避免云端问题
-                update_streamlit=True,
-                height=canvas_height,
-                width=actual_width,
-                drawing_mode="point",
-                point_display_radius=5,  # 增大点击标记
-                key=canvas_key,
-            )
-            
-            # 使用CSS显示背景（仅作为参考）
-            st.markdown(
-                f"""
-                <style>
-                canvas[data-testid="stCanvas"] {{
-                    border: 2px dashed #ff6b6b;
-                    background-color: #f8f9fa;
-                }}
-                </style>
-                <div style="font-size:12px;color:#666;margin-top:5px;">
-                💡 提示：参考上方图片，在画布区域点击进行取色
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-            
-        except Exception as e:
-            st.error(f"兼容模式也失败了: {str(e)}")
-            canvas_result = None
-            
-    else:  # 手动取色模式
-        st.write("使用手动输入坐标模式，100%兼容所有环境")
-        
-        # 显示参考图片，带网格
-        st.image(canvas_img, caption="参考图片 - 估算要取色的位置坐标", width=actual_width)
-        
-        # 坐标输入
-        st.subheader("📍 输入取色坐标")
-        col1, col2 = st.columns(2)
-        with col1:
-            manual_x = st.number_input(
-                f"X坐标 (0-{actual_width-1})", 
-                min_value=0, 
-                max_value=actual_width-1, 
-                value=actual_width//2,
-                key="manual_x_coord"
-            )
-        with col2:
-            manual_y = st.number_input(
-                f"Y坐标 (0-{canvas_height-1})", 
-                min_value=0, 
-                max_value=canvas_height-1, 
-                value=canvas_height//2,
-                key="manual_y_coord"
-            )
-        
-        # 预览选择的位置
-        st.write(f"🎯 将在坐标 ({manual_x}, {manual_y}) 处取色")
-        
-        if st.button("🎨 开始取色", key="manual_color_pick", type="primary"):
-            # 模拟canvas结果
-            canvas_result = type('ManualCanvasResult', (object,), {
+        if st.button("🎯 在此坐标取色", key="manual_pick"):
+            canvas_result = type('MockCanvasResult', (object,), {
                 'json_data': {
                     'objects': [{'left': manual_x, 'top': manual_y}]
                 }
