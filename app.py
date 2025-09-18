@@ -48,6 +48,23 @@ def create_canvas_image(img, canvas_width):
         canvas_width = int(img.width * canvas_height / img.height)
     return img.resize((canvas_width, canvas_height)), canvas_width, canvas_height
 
+@st.cache_data
+def process_uploaded_image(file_content, canvas_width, file_hash):
+    """处理上传的图片，返回原图和调整后的画布图片"""
+    img = Image.open(BytesIO(file_content)).convert("RGB")
+    
+    # 计算画布尺寸
+    canvas_height = int(img.height * canvas_width / img.width)
+    max_height = 1500
+    if canvas_height > max_height:
+        canvas_height = max_height
+        canvas_width = int(img.width * canvas_height / img.height)
+    
+    # 创建画布用的调整后图片
+    canvas_img = img.resize((canvas_width, canvas_height))
+    
+    return img, canvas_img, canvas_width, canvas_height
+
 # -----------------------------
 # 页面布局
 # -----------------------------
@@ -114,63 +131,48 @@ st.header("📤 上传图片")
 uploaded_file = st.file_uploader("请选择图片文件", type=["png", "jpg", "jpeg"])
 
 if uploaded_file:
-    # 读取文件内容并生成哈希
+    # 读取文件内容
     file_content = uploaded_file.read()
     current_hash = get_image_hash(file_content)
     
-    # 如果是新图片或图片发生变化，重新加载
-    if (st.session_state.image_hash != current_hash or 
-        st.session_state.uploaded_image is None):
-        
-        uploaded_file.seek(0)  # 重置文件指针
-        st.session_state.uploaded_image = Image.open(uploaded_file).convert("RGB")
-        st.session_state.image_hash = current_hash
-        # 清理旧的画布图片缓存
-        st.session_state.canvas_image = None
-    
-    img = st.session_state.uploaded_image
-    
     # 显示原始图片信息
-    st.write(f"图片尺寸：{img.width} × {img.height} 像素")
+    uploaded_file.seek(0)
+    temp_img = Image.open(uploaded_file)
+    st.write(f"图片尺寸：{temp_img.width} × {temp_img.height} 像素")
 
     # 使用稳定的key避免slider变化导致的问题
     canvas_width = st.slider(
         "取色画布宽度", 
         min_value=200, 
         max_value=2400, 
-        value=min(600, img.width),
+        value=min(600, temp_img.width),
         key="canvas_width_slider"
     )
     
-    # 创建画布图片
-    img_resized, actual_width, canvas_height = create_canvas_image(img, canvas_width)
-    
-    # 缓存调整后的图片，避免重复调整大小
-    cache_key = f"{current_hash}_{actual_width}_{canvas_height}"
-    if (st.session_state.canvas_image is None or 
-        getattr(st.session_state, 'canvas_cache_key', None) != cache_key):
-        st.session_state.canvas_image = img_resized
-        st.session_state.canvas_cache_key = cache_key
+    # 使用缓存函数处理图片，传入canvas_width作为缓存参数
+    img, canvas_img, actual_width, canvas_height = process_uploaded_image(file_content, canvas_width, current_hash)
     
     st.subheader("🎯 取色画布")
     
-    # 使用稳定的key，基于图片哈希而不是文件名
+    # 使用包含尺寸信息的key，确保slider变化时canvas正确更新
     canvas_key = f"canvas_{current_hash[:8]}_{actual_width}_{canvas_height}"
     
-    # 添加重置画布按钮，用于解决显示问题
+    # 添加重置画布按钮
     col1, col2 = st.columns([1, 10])
     with col1:
         if st.button("🔄", help="重置画布显示", key="reset_canvas"):
+            # 清理相关缓存
+            process_uploaded_image.clear()
             st.rerun()
     with col2:
-        st.markdown("💡 如果画布显示异常，可点击左侧的重置按钮")
+        st.markdown("💡如果画布显示异常，可点击左侧的重置按钮")
     
     try:
         canvas_result = st_canvas(
             fill_color="rgba(255, 165, 0, 0.3)",
             stroke_width=2,
             stroke_color="#ff0000",
-            background_image=st.session_state.canvas_image,
+            background_image=canvas_img,
             update_streamlit=True,
             height=canvas_height,
             width=actual_width,
@@ -179,9 +181,29 @@ if uploaded_file:
             key=canvas_key,
         )
     except Exception as e:
-        st.error("画布显示出现问题，请尝试点击重置按钮或重新上传图片")
-        st.write(f"错误详情: {str(e)}")
-        canvas_result = None
+        st.error(f"画布创建失败: {str(e)}")
+        st.info("使用备用方案...")
+        
+        # 备用方案：显示图片供参考
+        st.subheader("📷 参考图片")
+        st.image(canvas_img, caption="请参考此图片，使用下方手动输入坐标取色", width=actual_width)
+        
+        # 手动输入坐标
+        st.subheader("📍 手动输入取色坐标")
+        coord_col1, coord_col2 = st.columns(2)
+        with coord_col1:
+            manual_x = st.number_input("X坐标", min_value=0, max_value=actual_width-1, value=actual_width//2, key="manual_x")
+        with coord_col2:
+            manual_y = st.number_input("Y坐标", min_value=0, max_value=canvas_height-1, value=canvas_height//2, key="manual_y")
+        
+        if st.button("🎯 在此坐标取色", key="manual_pick"):
+            canvas_result = type('MockCanvasResult', (object,), {
+                'json_data': {
+                    'objects': [{'left': manual_x, 'top': manual_y}]
+                }
+            })()
+        else:
+            canvas_result = None
 
     st.markdown("<div style='color:#fa8c16;font-size:16px;margin:8px 0 0 0;'><b>提示：</b>点击画布任意位置即可取色</div>", unsafe_allow_html=True)
 
