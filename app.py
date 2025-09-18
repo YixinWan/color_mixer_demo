@@ -152,21 +152,39 @@ if uploaded_file:
     # 使用缓存函数处理图片，传入canvas_width作为缓存参数
     img, canvas_img, actual_width, canvas_height = process_uploaded_image(file_content, canvas_width, current_hash)
     
-    # 保证背景图一定是 PIL.Image，并且是 RGB
+    # 强制保证 PIL.Image 格式，并限制大小
     if not isinstance(canvas_img, Image.Image):
         canvas_img = Image.fromarray(canvas_img)
-    canvas_img = canvas_img.convert("RGB")  
+    canvas_img = canvas_img.convert("RGBA")
+    canvas_img.thumbnail((1500, 1500))  # 避免过大导致前端崩溃
+    
+    st.subheader("🎯 取色画布")
+    
+    # 使用包含尺寸信息的key，确保slider变化时canvas正确更新
+    canvas_key = f"canvas_{current_hash[:8]}_{actual_width}_{canvas_height}"
+    
+     # 添加重置画布按钮
+    col1, col2 = st.columns([1, 10])
+    with col1:
+        if st.button("🔄", help="重置画布显示", key="reset_canvas"):
+            # 清理相关缓存
+            process_uploaded_image.clear()
+            st.rerun()
+    with col2:
+        st.markdown("💡如果画布显示异常，可点击左侧的重置按钮")
 
+
+    # Canvas 设置背景图片（用 PIL.Image）
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)",
         stroke_width=2,
         stroke_color="#ff0000",
-        background_image=canvas_img,   # ✅ 传入 RGB PIL.Image
-        update_streamlit=False,        # ⚠️ 先关掉，云端更稳定
+        background_image=canvas_img,  # 这里保持 PIL 对象，不用 np.array
+        update_streamlit=True,
         height=canvas_img.height,
         width=canvas_img.width,
         drawing_mode="point",
-        key="canvas",                  # ✅ 先用固定 key 排查问题
+        key=canvas_key,
     )
 #------------------------------------------------------------------
     st.markdown("<div style='color:#fa8c16;font-size:16px;margin:8px 0 0 0;'><b>提示：</b>点击画布任意位置即可取色</div>", unsafe_allow_html=True)
