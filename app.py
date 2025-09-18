@@ -144,7 +144,7 @@ if uploaded_file:
     canvas_width = st.slider(
         "取色画布宽度", 
         min_value=200, 
-        max_value=2400, 
+        max_value=1500, 
         value=min(600, temp_img.width),
         key="canvas_width_slider"
     )
@@ -157,7 +157,7 @@ if uploaded_file:
     # 使用包含尺寸信息的key，确保slider变化时canvas正确更新
     canvas_key = f"canvas_{current_hash[:8]}_{actual_width}_{canvas_height}"
     
-    # 添加重置画布按钮
+     # 添加重置画布按钮
     col1, col2 = st.columns([1, 10])
     with col1:
         if st.button("🔄", help="重置画布显示", key="reset_canvas"):
@@ -166,44 +166,25 @@ if uploaded_file:
             st.rerun()
     with col2:
         st.markdown("💡如果画布显示异常，可点击左侧的重置按钮")
-    
-    try:
-        canvas_result = st_canvas(
-            fill_color="rgba(255, 165, 0, 0.3)",
-            stroke_width=2,
-            stroke_color="#ff0000",
-            background_image=canvas_img,
-            update_streamlit=True,
-            height=canvas_height,
-            width=actual_width,
-            drawing_mode="point",
-            point_display_radius=3,
-            key=canvas_key,
-        )
-    except Exception as e:
-        st.error(f"画布创建失败: {str(e)}")
-        st.info("使用备用方案...")
         
-        # 备用方案：显示图片供参考
-        st.subheader("📷 参考图片")
-        st.image(canvas_img, caption="请参考此图片，使用下方手动输入坐标取色", width=actual_width)
-        
-        # 手动输入坐标
-        st.subheader("📍 手动输入取色坐标")
-        coord_col1, coord_col2 = st.columns(2)
-        with coord_col1:
-            manual_x = st.number_input("X坐标", min_value=0, max_value=actual_width-1, value=actual_width//2, key="manual_x")
-        with coord_col2:
-            manual_y = st.number_input("Y坐标", min_value=0, max_value=canvas_height-1, value=canvas_height//2, key="manual_y")
-        
-        if st.button("🎯 在此坐标取色", key="manual_pick"):
-            canvas_result = type('MockCanvasResult', (object,), {
-                'json_data': {
-                    'objects': [{'left': manual_x, 'top': manual_y}]
-                }
-            })()
-        else:
-            canvas_result = None
+    # 将图片转 base64
+    buffered = BytesIO()
+    canvas_img.convert("RGB").save(buffered, format="PNG")
+    img_base64 = base64.b64encode(buffered.getvalue()).decode()
+
+    # Canvas 设置背景图片（用 PIL.Image）
+    canvas_result = st_canvas(
+        fill_color="rgba(255, 165, 0, 0.3)",
+        stroke_width=2,
+        stroke_color="#ff0000",
+        background_image=canvas_img.copy(),  # 这里保持 PIL 对象，不用 np.array
+        update_streamlit=True,
+        height=canvas_img.height,
+        width=canvas_img.width,
+        drawing_mode="point",
+        point_display_radius=3,
+        key=canvas_key,
+    )
 
     st.markdown("<div style='color:#fa8c16;font-size:16px;margin:8px 0 0 0;'><b>提示：</b>点击画布任意位置即可取色</div>", unsafe_allow_html=True)
 
