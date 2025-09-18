@@ -7,6 +7,8 @@ import json
 import os
 from scipy.optimize import minimize
 import itertools
+import base64
+from io import BytesIO
 
 # -----------------------------
 # 初始化 session_state
@@ -22,6 +24,16 @@ if "active_colors" not in st.session_state or not isinstance(st.session_state.ge
 data_path = os.path.join(os.path.dirname(__file__), "paint_colors.json")
 with open(data_path, "r", encoding="utf-8") as f:
     paint_colors = json.load(f)
+
+# -----------------------------
+# 辅助函数：将PIL图片转换为base64格式
+# -----------------------------
+def pil_to_base64(img):
+    """将PIL图片转换为base64字符串"""
+    buffer = BytesIO()
+    img.save(buffer, format="PNG")
+    img_str = base64.b64encode(buffer.getvalue()).decode()
+    return f"data:image/png;base64,{img_str}"
 
 # -----------------------------
 # 页面布局
@@ -40,12 +52,12 @@ st.markdown(
 # 保存/加载/清空
 btn_cols = st.columns([1, 1, 1, 10])
 with btn_cols[0]:
-    if st.button("💾 保存"):
+    if st.button("💾 保存", help="保存当前调色盘"):
         with open("my_palette.json", "w", encoding="utf-8") as f:
             json.dump(st.session_state.active_colors, f, ensure_ascii=False, indent=2)
         st.success("已保存调色盘到 my_palette.json")
 with btn_cols[1]:
-    if st.button("📂 加载"):
+    if st.button("📂 加载", help="从文件加载调色盘"):
         if os.path.exists("my_palette.json"):
             with open("my_palette.json", "r", encoding="utf-8") as f:
                 loaded = json.load(f)
@@ -55,108 +67,122 @@ with btn_cols[1]:
         else:
             st.warning("my_palette.json 文件不存在")
 with btn_cols[2]:
-    if st.button("🧹 清空"):
+    if st.button("🧹 清空", help="清空当前调色盘"):
         st.session_state.active_colors = {}
         st.rerun()
 
-# 显示缩略调色盘（hover 显示 ×）
+# 显示缩略调色盘，可点击删除
 if st.session_state.active_colors:
-    st.markdown(
-        """
-        <style>
-        .color-box { position:relative; display:inline-block; margin:4px; }
-        .color-square { width:50px; height:50px; border-radius:4px; border:1px solid #aaa; }
-        .color-name { width:74px; text-align:left; font-size:14px; margin-top:2px; line-height:1.2; word-break:break-word; }
-        .del-btn {
-            position:absolute; top:-6px; right:-6px;
-            width:20px; height:20px;
-            background:#ff4d4f; color:white; border:none;
-            border-radius:50%; cursor:pointer; font-size:14px;
-            display:none;
-        }
-        .color-box:hover .del-btn { display:block; }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
-
+    color_cols = st.columns(16)
     keys = list(st.session_state.active_colors.keys())
-    for name in keys:
+    for i, name in enumerate(keys):
         rgb = st.session_state.active_colors[name]
-        delete_key = f"del_{name}"
-        st.markdown(
-            f"""
-            <div class="color-box">
-                <div class="color-square" style="background:rgb{tuple(rgb)}"></div>
-                <div class="color-name">{name}</div>
-                <form action="" method="get">
-                    <button class="del-btn" name="del" value="{name}">×</button>
-                </form>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    # 处理删除动作
-    del_name = st.query_params.get("del")
-    if del_name and del_name in st.session_state.active_colors:
-        del st.session_state.active_colors[del_name]
-        st.query_params.clear()
-        st.rerun()
+        with color_cols[i % 16]:
+            st.markdown(
+                f"""
+                <div style='position:relative; display:inline-block; margin:0; width:54px;'>
+                    <div style='width:50px;height:50px;border-radius:4px;background:rgb{tuple(rgb)};border:1px solid #aaa;'></div>
+                    <div style='width:74px;text-align:left;font-size:14px;margin-top:2px;line-height:1.2;white-space:normal;overflow:visible;'>{name}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            btn_clicked = st.button("×", key=f"del_{name}", help="删除该色块")
+            if btn_clicked:
+                del st.session_state.active_colors[name]
+                st.rerun()
 else:
     st.write("当前色库为空")
 
-st.markdown("---")
 
+st.markdown("---")
 # -----------------------------
 st.header("📤 上传图片")
-uploaded_file = st.file_uploader("", type=["png", "jpg", "jpeg"], label_visibility="collapsed")
+uploaded_file = st.file_uploader("请选择图片文件", type=["png", "jpg", "jpeg"])
 if uploaded_file:
     img = Image.open(uploaded_file).convert("RGB")
+    
+    # 显示原始图片信息
+    st.write(f"图片尺寸：{img.width} × {img.height} 像素")
 
     canvas_width = st.slider("取色画布宽度", min_value=200, max_value=2400, value=600)
     canvas_height = int(img.height * canvas_width / img.width)
+    
+    # 限制画布高度，防止过高
+    max_height = 1500
+    if canvas_height > max_height:
+        canvas_height = max_height
+        canvas_width = int(img.width * canvas_height / img.height)
+    
     img_resized = img.resize((canvas_width, canvas_height))
-
+    
+    # 将图片转换为base64格式
+    img_base64 = pil_to_base64(img_resized)
+    
+    st.subheader("🎯 取色画布")
+    
+    # 创建一个唯一的key来确保画布重新渲染
+    canvas_key = f"canvas_{canvas_width}_{canvas_height}_{uploaded_file.name}"
+    
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)",
-        stroke_width=0,
-        background_image=img_resized,
+        stroke_width=2,
+        stroke_color="#ff0000",
+        background_image=img_resized,  # 直接使用PIL图片对象
         update_streamlit=True,
         height=canvas_height,
         width=canvas_width,
         drawing_mode="point",
-        key=f"canvas_{canvas_width}",
+        point_display_radius=3,
+        key=canvas_key,
     )
 
     st.markdown("<div style='color:#fa8c16;font-size:16px;margin:8px 0 0 0;'><b>提示：</b>点击画布任意位置即可取色</div>", unsafe_allow_html=True)
 
-    st.header("🎯 取色")
+    st.header("🎯 取色结果")
     if canvas_result.json_data and "objects" in canvas_result.json_data:
         objects = canvas_result.json_data["objects"]
         if objects:
-            x, y = round(objects[-1]["left"]), round(objects[-1]["top"])
+            # 获取最后一个点击点的坐标
+            last_point = objects[-1]
+            x, y = round(last_point["left"]), round(last_point["top"])
+            
+            # 将画布坐标转换为原图坐标
             x_img = round(x * img.width / canvas_width)
             y_img = round(y * img.height / canvas_height)
+            
+            # 确保坐标在图片范围内
+            x_img = max(0, min(img.width - 1, x_img))
+            y_img = max(0, min(img.height - 1, y_img))
+            
             img_array = np.array(img)
 
             def get_avg_rgb(img_array, x, y, radius=2):
+                """获取指定位置周围区域的平均RGB值"""
                 h, w, _ = img_array.shape
                 x_min, x_max = max(0, x-radius), min(w, x+radius+1)
                 y_min, y_max = max(0, y-radius), min(h, y+radius+1)
                 patch = img_array[y_min:y_max, x_min:x_max, :]
                 return patch.mean(axis=(0, 1)).astype(int)
 
-            rgb = get_avg_rgb(img_array, x_img, y_img, radius=0)
+            # 获取取色点的RGB值
+            rgb = get_avg_rgb(img_array, x_img, y_img, radius=1)
             hex_color = "#{:02x}{:02x}{:02x}".format(*rgb)
 
-            st.markdown(f"**🎯 取色结果：** RGB={tuple(rgb)}, HEX={hex_color}")
-            st.markdown(f"<div style='width:100px;height:50px;background:{hex_color}'></div>", unsafe_allow_html=True)
+            # 显示取色结果
+            color_col1, color_col2 = st.columns([1, 20])
+            with color_col1:
+                st.markdown(f"<div style='width:80px;height:80px;background:{hex_color};border:2px solid #333;border-radius:8px;'></div>", unsafe_allow_html=True)
+            with color_col2:
+                st.markdown(f"**📍 坐标：** ({x_img}, {y_img})")
+                st.markdown(f"**🎨 RGB值：** {rgb}")
+                st.markdown(f"**🔖 HEX值：** {hex_color}")
 
-            # 推荐颜料
+            # 推荐颜料部分保持不变
             palette_colors = st.session_state.active_colors if st.session_state.active_colors else paint_colors
 
             def delta_e(rgb1, rgb2):
+                """计算两个RGB颜色之间的色差"""
                 lab1 = color.rgb2lab(np.array([[rgb1]])/255.0)[0, 0]
                 lab2 = color.rgb2lab(np.array([[rgb2]])/255.0)[0, 0]
                 return np.linalg.norm(lab1 - lab2)
@@ -173,6 +199,7 @@ if uploaded_file:
             best_loss = 1e9
             best_weights, best_colors = None, None
             rng = np.random.default_rng(42)
+            
             for n in range(2, 5):
                 for comb in itertools.combinations(candidate_colors, n):
                     palette_cmy = np.array([rgb_to_cmy(c) for _, c in comb])
@@ -197,14 +224,17 @@ if uploaded_file:
                     for _ in range(8):
                         w0 = rng.random(N)
                         w0 = w0 / w0.sum()
-                        res = minimize(loss, w0, bounds=bounds, constraints=cons)
-                        weights = np.clip(res.x, 0, 1)
-                        if weights.sum() > 0:
-                            weights /= weights.sum()
-                        l = loss(weights)
-                        if l < best_local_loss:
-                            best_local_loss = l
-                            best_local_weights = weights
+                        try:
+                            res = minimize(loss, w0, bounds=bounds, constraints=cons)
+                            weights = np.clip(res.x, 0, 1)
+                            if weights.sum() > 0:
+                                weights /= weights.sum()
+                            l = loss(weights)
+                            if l < best_local_loss:
+                                best_local_loss = l
+                                best_local_weights = weights
+                        except:
+                            continue
 
                     if best_local_loss < best_loss:
                         best_loss = best_local_loss
@@ -219,10 +249,10 @@ if uploaded_file:
 
                     st.header("🖌️ 推荐油画颜料及混合比例")
                     st.markdown('<div style="display:flex;flex-direction:column;gap:10px;margin:12px 0 18px 0;">', unsafe_allow_html=True)
-                    for (name, rgb), percent in zip(top_colors, (weights*100).round().astype(int)):
+                    for (name, rgb_paint), percent in zip(top_colors, (weights*100).round().astype(int)):
                         st.markdown(
                             f'''<div style="display:flex;align-items:center;gap:18px;min-height:44px;">
-                                <div style="width:38px;height:38px;border-radius:8px;background:rgb{tuple(rgb)};border:2px solid #aaa;"></div>
+                                <div style="width:38px;height:38px;border-radius:8px;background:rgb{tuple(rgb_paint)};border:2px solid #aaa;"></div>
                                 <div style="font-size:18px;font-weight:bold;color:#fa8c16;min-width:48px;text-align:center;">{percent}%</div>
                                 <div style="font-size:16px;color:#333;word-break:break-all;">{name}</div>
                             </div>''', unsafe_allow_html=True)
@@ -233,24 +263,49 @@ if uploaded_file:
                     mixed_cmy = np.dot(weights, palette_cmy_used)
                     mixed_rgb = cmy_to_rgb(mixed_cmy)
                     mixed_hex = "#{:02x}{:02x}{:02x}".format(*mixed_rgb)
+                    
+                    st.subheader("🎨 混合效果对比")
                     st.markdown(
-                        f"<div style='display:inline-block;margin:4px 0 8px 0;'>"
-                        f"<span style='font-size:15px;color:#888;'>混合后理论色块：</span>"
-                        f"<span style='display:inline-block;width:40px;height:24px;background:{mixed_hex};border-radius:4px;border:1px solid #ccc;vertical-align:middle;'></span>"
-                        f" <span style='font-size:13px;color:#888;'>{mixed_hex.upper()}</span>"
-                        f"</div>", unsafe_allow_html=True
+                        f"""
+                        <div style="display:flex;align-items:center;gap:20px;margin:12px 0;">
+                            <div style="text-align:center;">
+                                <div style="margin-bottom:8px;font-weight:bold;color:#333;">原始颜色</div>
+                                <div style="width:80px;height:80px;background:{hex_color};border:2px solid #333;border-radius:8px;"></div>
+                                <div style="margin-top:4px;font-size:12px;color:#666;">{hex_color}</div>
+                            </div>
+                            <div style="font-size:24px;color:#fa8c16;">→</div>
+                            <div style="text-align:center;">
+                                <div style="margin-bottom:8px;font-weight:bold;color:#333;">混合后理论色</div>
+                                <div style="width:80px;height:80px;background:{mixed_hex};border:2px solid #333;border-radius:8px;"></div>
+                                <div style="margin-top:4px;font-size:12px;color:#666;">{mixed_hex}</div>
+                            </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
                     )
+    else:
+        st.info("👆 请在右侧画布上点击任意位置进行取色")
 
 # -----------------------------
 # 侧边栏颜料选择
 # -----------------------------
 st.sidebar.subheader("🎨 官方油画色卡")
-for name, rgb in paint_colors.items():
+search_term = st.sidebar.text_input("🔍 搜索颜料名称", placeholder="输入颜料名称...")
+
+# 过滤颜料
+filtered_colors = paint_colors
+if search_term:
+    filtered_colors = {name: rgb for name, rgb in paint_colors.items() 
+                      if search_term.lower() in name.lower()}
+
+st.sidebar.write(f"显示 {len(filtered_colors)} / {len(paint_colors)} 种颜料")
+
+for name, rgb in filtered_colors.items():
     cols_side = st.sidebar.columns([1, 3])
     with cols_side[0]:
-        st.markdown(f"<div style='width:20px;height:20px;background:rgb{tuple(rgb)}'></div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='width:20px;height:20px;background:rgb{tuple(rgb)};border:1px solid #ccc;border-radius:2px;'></div>", unsafe_allow_html=True)
     with cols_side[1]:
-        if st.button(name, key=f"btn_{name}"):
+        if st.button(name, key=f"btn_{name}", help=f"添加 {name} 到调色盘"):
             if name not in st.session_state.user_colors:
                 st.session_state.user_colors[name] = rgb
             st.session_state.active_colors[name] = rgb
@@ -270,7 +325,7 @@ st.markdown('''
     border-radius: 8px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.08);
     padding: 16px 20px 12px 20px;
-    font-size: 18px;
+    font-size: 16px;
     color: #666;
     z-index: 9999;
     min-width: 220px;
@@ -278,8 +333,8 @@ st.markdown('''
 .contact-float a { color: #fa8c16; text-decoration: none; }
 </style>
 <div class="contact-float">
-<div style="font-size:18px; font-weight:bold; margin-bottom:6px;">如有建议或问题欢迎反馈：</div>
-<span style="font-size:16px;vertical-align:middle;">🟩</span> <span style="font-size:16px;">微信号：Veep625</span><br>
-<span style="font-size:16px;vertical-align:middle;">✉️</span> <span style="font-size:16px;">邮箱：<a href="mailto:wanyixin625@gmail.com">wanyixin625@gmail.com</a></span>
+<div style="font-size:16px; font-weight:bold; margin-bottom:6px;">如有建议或问题欢迎反馈：</div>
+<span style="font-size:14px;vertical-align:middle;">🟩</span> <span style="font-size:14px;">微信号：Veep625</span><br>
+<span style="font-size:14px;vertical-align:middle;">✉️</span> <span style="font-size:14px;">邮箱：<a href="mailto:wanyixin625@gmail.com">wanyixin625@gmail.com</a></span>
 </div>
 ''', unsafe_allow_html=True)
