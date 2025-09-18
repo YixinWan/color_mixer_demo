@@ -166,11 +166,7 @@ if uploaded_file:
             st.rerun()
     with col2:
         st.markdown("💡如果画布显示异常，可点击左侧的重置按钮")
-        
-    # 将图片转 base64
-    buffered = BytesIO()
-    canvas_img.convert("RGB").save(buffered, format="PNG")
-    img_base64 = base64.b64encode(buffered.getvalue()).decode()
+
 
     # Canvas 设置背景图片（用 PIL.Image）
     canvas_result = st_canvas(
@@ -179,8 +175,8 @@ if uploaded_file:
         stroke_color="#ff0000",
         background_image=canvas_img.copy(),  # 这里保持 PIL 对象，不用 np.array
         update_streamlit=True,
-        height=canvas_height,
-        width=canvas_width,
+        height=canvas_img.height,
+        width=canvas_img.width,
         drawing_mode="point",
         point_display_radius=3,
         key=canvas_key,
