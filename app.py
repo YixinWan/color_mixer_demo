@@ -126,7 +126,7 @@ else:
 
 st.markdown("---")
 
-# -----------------------------
+# ----------------------------------------------------------------------------------
 st.header("📤 上传图片")
 uploaded_file = st.file_uploader("请选择图片文件", type=["png", "jpg", "jpeg"])
 
@@ -179,13 +179,13 @@ if uploaded_file:
         stroke_color="#ff0000",
         background_image=canvas_img.copy(),  # 这里保持 PIL 对象，不用 np.array
         update_streamlit=True,
-        height=canvas_img.height,
-        width=canvas_img.width,
+        height=canvas_height,
+        width=canvas_width,
         drawing_mode="point",
         point_display_radius=3,
         key=canvas_key,
     )
-
+#------------------------------------------------------------------
     st.markdown("<div style='color:#fa8c16;font-size:16px;margin:8px 0 0 0;'><b>提示：</b>点击画布任意位置即可取色</div>", unsafe_allow_html=True)
 
     st.header("🎯 取色结果")
