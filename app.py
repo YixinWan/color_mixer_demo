@@ -137,7 +137,7 @@ if uploaded_file:
     
     # 显示原始图片信息
     uploaded_file.seek(0)
-    temp_img = Image.open(uploaded_file)
+    temp_img = Image.open(uploaded_file).convert("RGBA")  # 转 RGBA 保证兼容性
     st.write(f"图片尺寸：{temp_img.width} × {temp_img.height} 像素")
 
     # 使用稳定的key避免slider变化导致的问题
@@ -151,6 +151,12 @@ if uploaded_file:
     
     # 使用缓存函数处理图片，传入canvas_width作为缓存参数
     img, canvas_img, actual_width, canvas_height = process_uploaded_image(file_content, canvas_width, current_hash)
+    
+    # 强制保证 PIL.Image 格式，并限制大小
+    if not isinstance(canvas_img, Image.Image):
+        canvas_img = Image.fromarray(canvas_img)
+    canvas_img = canvas_img.convert("RGBA")
+    canvas_img.thumbnail((1500, 1500))  # 避免过大导致前端崩溃
     
     st.subheader("🎯 取色画布")
     
@@ -173,7 +179,7 @@ if uploaded_file:
         fill_color="rgba(255, 165, 0, 0.3)",
         stroke_width=2,
         stroke_color="#ff0000",
-        background_image=canvas_img.copy(),  # 这里保持 PIL 对象，不用 np.array
+        background_image=canvas_img,  # 这里保持 PIL 对象，不用 np.array
         update_streamlit=True,
         height=canvas_img.height,
         width=canvas_img.width,
