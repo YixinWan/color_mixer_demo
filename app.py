@@ -178,7 +178,6 @@ if uploaded_file:
         height=canvas_img.height,
         width=canvas_img.width,
         drawing_mode="point",
-        point_display_radius=3,
         key=canvas_key,
     )
 #------------------------------------------------------------------
