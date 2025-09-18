@@ -110,7 +110,7 @@ st.markdown("---")
 
 # -----------------------------
 st.header("📤 上传图片")
-uploaded_file = st.file_uploader("", type=["png", "jpg", "jpeg"])
+uploaded_file = st.file_uploader("", type=["png", "jpg", "jpeg"], label_visibility="collapsed")
 if uploaded_file:
     img = Image.open(uploaded_file).convert("RGB")
 
