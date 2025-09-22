@@ -1,9 +1,5 @@
 streamlit==1.38.0
-<<<<<<< HEAD
-streamlit-drawable-canvas==0.9.2  
-=======
-streamlit-drawable-canvas==0.9.2
->>>>>>>
+streamlit-drawable-canvas==0.9.2  # very important for drawing canvas
 pillow>=10.0.0
 numpy>=1.26.0
 scikit-image>=0.22.0
