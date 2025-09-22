@@ -68,16 +68,107 @@ def process_uploaded_image(file_content, canvas_width, file_hash):
 # -----------------------------
 # 页面布局
 # -----------------------------
-st.set_page_config(layout="wide")
-st.title("🎨 点色取色 + 油画颜料配比")
-
-# 我的色库区
-st.header("🖌️ 我的色库")
-
+# title部分
+st.set_page_config(page_title="油画调色工坊", layout="wide")
+# 高级渐变 CSS
 st.markdown(
-    f"<span style='font-size:15px;color:#888;'>当前色库颜色数量：<b>{len(st.session_state.active_colors)}</b></span>",
+    """
+    <style>
+    .header-container {
+        background: linear-gradient(135deg, #667eea, #764ba2, #ff9a9e);
+        padding: 2.5rem;
+        border-radius: 16px;
+        text-align: center;
+        color: white;
+        margin-bottom: 2rem;
+        box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+        position: relative;
+        overflow: hidden;
+    }
+
+    /* 在背景上加一个半透明光效 */
+    .header-container::before {
+        content: "";
+        position: absolute;
+        top: -50%;
+        left: -50%;
+        width: 200%;
+        height: 200%;
+        background: radial-gradient(circle at center, rgba(255,255,255,0.15), transparent 70%);
+        transform: rotate(25deg);
+    }
+
+    .header-title {
+        font-size: 2.8rem;
+        font-weight: 700;
+        margin: 0;
+        padding: 0;
+        position: relative;
+        z-index: 1;
+    }
+
+    .header-subtitle {
+        font-size: 1.2rem;
+        font-weight: 400;
+        margin-top: 0.8rem;
+        opacity: 0.95;
+        position: relative;
+        z-index: 1;
+    }
+
+    .header-divider {
+        width: 70px;
+        height: 3px;
+        background-color: rgba(255,255,255,0.85);
+        margin: 1rem auto;
+        border-radius: 3px;
+        position: relative;
+        z-index: 1;
+    }
+    </style>
+    """,
     unsafe_allow_html=True
 )
+
+st.markdown(
+    """
+    <div class="header-container">
+        <div class="header-title">油画调色工坊</div>
+        <div class="header-divider"></div>
+        <div class="header-subtitle">上传图片 · 点击取色 · 获取颜料配比</div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+
+# ----------------------------------------------------------------------------------
+# 我的调色盘区
+# st.header("🖌️ 我的调色盘")
+
+# st.markdown(
+#     f"<span style='font-size:15px;color:#888;'>当前调色盘颜色数量：<b>{len(st.session_state.active_colors)}</b></span>",
+#     unsafe_allow_html=True
+# )
+st.markdown(
+    f"""
+    <div style="
+        background: white;
+        border-radius: 12px;
+        padding: 1rem 1.5rem;
+        margin: 1rem 0;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        border-left: 16px solid #764ba2;
+    ">
+        <h3 style="margin:0; color:#333;">🖌️ 我的调色盘</h3>
+        <p style="margin:0; font-size:14px; color:#666;">
+            当前调色盘颜色数量：<b>{len(st.session_state.active_colors)}</b>
+        </p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
 
 # 保存/加载/清空
 btn_cols = st.columns([1, 1, 1, 10])
@@ -127,8 +218,26 @@ else:
 st.markdown("---")
 
 # ----------------------------------------------------------------------------------
-st.header("📤 上传图片")
-uploaded_file = st.file_uploader("请选择图片文件", type=["png", "jpg", "jpeg"])
+# st.header("📤 上传图片")
+st.markdown(
+    f"""
+    <div style="
+        background: white;
+        border-radius: 12px;
+        padding: 1rem 1.5rem;
+        margin: 1rem 0;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        border-left: 16px solid #764ba2;
+    ">
+        <h3 style="margin:0; color:#333;">📤 上传图片</h3>
+        <p style="margin:0; font-size:14px; color:#666;">
+            支持 PNG/JPG/JPEG 格式，点击下方选择图片
+        </p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+uploaded_file = st.file_uploader("", type=["png", "jpg", "jpeg"])
 
 if uploaded_file:
     # 读取文件内容
@@ -339,7 +448,7 @@ if uploaded_file:
 # -----------------------------
 # 侧边栏颜料选择
 # -----------------------------
-st.sidebar.subheader("🎨 官方油画色卡")
+st.sidebar.subheader("🎨 油画色卡")
 search_term = st.sidebar.text_input("🔍 搜索颜料名称", placeholder="输入颜料名称...")
 
 # 过滤颜料
