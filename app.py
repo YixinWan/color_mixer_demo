@@ -355,51 +355,53 @@ if uploaded_file:
             def cmy_to_rgb(cmy):
                 return np.clip((1 - cmy) * 255, 0, 255).astype(int)
 
+            # Step 1: 单色检查
             best_loss = 1e9
-            best_weights, best_colors = None, None
+            best_colors, best_weights = None, None
             rng = np.random.default_rng(42)
-            
-            for n in range(2, 5):
-                for comb in itertools.combinations(candidate_colors, n):
-                    palette_cmy = np.array([rgb_to_cmy(c) for _, c in comb])
 
-                    def loss(w):
-                        w = np.clip(w, 0, 1)
-                        if w.sum() == 0:
-                            return 1e6
-                        w = w / w.sum()
-                        mixed_cmy = np.dot(w, palette_cmy)
-                        mixed_rgb = cmy_to_rgb(mixed_cmy)
-                        lab1 = color.rgb2lab(np.array([[rgb]])/255.0)[0, 0]
-                        lab2 = color.rgb2lab(np.array([[mixed_rgb]])/255.0)[0, 0]
-                        return np.linalg.norm(lab1 - lab2)
+            for name, rgb_paint in candidate_colors:
+                lab1 = color.rgb2lab(np.array([[rgb]])/255.0)[0, 0]
+                lab2 = color.rgb2lab(np.array([[rgb_paint]])/255.0)[0, 0]
+                loss = np.linalg.norm(lab1 - lab2)
+                if loss < best_loss:
+                    best_loss = loss
+                    best_colors = [(name, rgb_paint)]
+                    best_weights = np.array([1.0])
 
-                    N = len(comb)
-                    cons = ({'type': 'eq', 'fun': lambda w: np.sum(np.clip(w, 0, 1)) - 1})
-                    bounds = [(0, 1)] * N
-                    best_local_loss = 1e9
-                    best_local_weights = None
+            # 如果单色已经很接近，可以直接返回（阈值你可以调整，比如2~3）
+            if best_loss < 3:
+                pass  # 直接用 best_colors, best_weights
+            else:
+                # Step 2~3: 扩展到 2~4 色组合
+                for n in range(2, 5):
+                    for comb in itertools.combinations(candidate_colors, n):
+                        palette_cmy = np.array([rgb_to_cmy(c) for _, c in comb])
 
-                    for _ in range(8):
-                        w0 = rng.random(N)
-                        w0 = w0 / w0.sum()
-                        try:
-                            res = minimize(loss, w0, bounds=bounds, constraints=cons)
-                            weights = np.clip(res.x, 0, 1)
-                            if weights.sum() > 0:
-                                weights /= weights.sum()
-                            l = loss(weights)
-                            if l < best_local_loss:
-                                best_local_loss = l
-                                best_local_weights = weights
-                        except:
-                            continue
+                        def loss(w):
+                            mixed_cmy = np.dot(w, palette_cmy)
+                            mixed_rgb = cmy_to_rgb(mixed_cmy)
+                            lab1 = color.rgb2lab(np.array([[rgb]])/255.0)[0, 0]
+                            lab2 = color.rgb2lab(np.array([[mixed_rgb]])/255.0)[0, 0]
+                            return np.linalg.norm(lab1 - lab2)
 
-                    if best_local_loss < best_loss:
-                        best_loss = best_local_loss
-                        best_weights = best_local_weights
-                        best_colors = comb
+                        N = len(comb)
+                        cons = ({'type': 'eq', 'fun': lambda w: np.sum(w) - 1})
+                        bounds = [(0, 1)] * N
 
+                        for _ in range(6):  # 减少随机重启次数
+                            w0 = rng.random(N)
+                            w0 /= w0.sum()
+                            res = minimize(loss, w0, bounds=bounds, constraints=cons, method='SLSQP')
+                            if res.success and res.fun < best_loss:
+                                best_loss = res.fun
+                                best_weights = res.x
+                                best_colors = comb
+
+                    # 如果在 n 色组合中已经找到很好结果，可以提前停止
+                    if best_loss < 2:
+                        break
+             # 显示推荐结果
             if best_colors and best_weights is not None:
                 filtered = [(c, w) for c, w in zip(best_colors, best_weights) if w > 0.05]
                 if filtered:
