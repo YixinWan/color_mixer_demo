@@ -369,7 +369,7 @@ if uploaded_file:
                     best_colors = [(name, rgb_paint)]
                     best_weights = np.array([1.0])
 
-            # 如果单色已经很接近，可以直接返回（阈值你可以调整，比如2~3）
+            # 如果单色已经很接近，可以直接返回（阈值可以调整，比如2~3）
             if best_loss < 3:
                 pass  # 直接用 best_colors, best_weights
             else:
