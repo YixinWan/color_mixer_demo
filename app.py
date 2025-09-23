@@ -295,6 +295,32 @@ if uploaded_file:
         drawing_mode="point",
         key=canvas_key,
     )
+    
+# -----------------------------------------------------------------------------------
+    # ============ 新的函数：Lab空间取色 ============
+    def get_avg_rgb_lab(img_array, x, y, radius=10):
+        """
+        在 Lab 空间取邻域平均，再转回 RGB
+        img_array: numpy数组 (H, W, 3)，RGB格式 [0,255]
+        x, y: 中心点坐标
+        radius: 邻域半径，1表示3x3区域
+        """
+        h, w, _ = img_array.shape
+        x_min, x_max = max(0, x-radius), min(w, x+radius+1)
+        y_min, y_max = max(0, y-radius), min(h, y+radius+1)
+        patch = img_array[y_min:y_max, x_min:x_max, :]
+
+        # 转到 [0,1] 再转 Lab
+        patch_lab = color.rgb2lab(patch / 255.0)
+        mean_lab = patch_lab.mean(axis=(0, 1))
+
+        # 再转回 RGB
+        mean_rgb = (color.lab2rgb(mean_lab[np.newaxis, np.newaxis, :])[0, 0] * 255).astype(int)
+        return np.clip(mean_rgb, 0, 255)
+
+    def rgb_to_hex(rgb):
+        """RGB 转 HEX"""
+        return "#{:02x}{:02x}{:02x}".format(*rgb)
 #------------------------------------------------------------------
     st.markdown("<div style='color:#fa8c16;font-size:16px;margin:8px 0 0 0;'><b>提示：</b>点击画布任意位置即可取色</div>", unsafe_allow_html=True)
 
@@ -315,19 +341,10 @@ if uploaded_file:
             y_img = max(0, min(img.height - 1, y_img))
             
             img_array = np.array(img)
-
-            def get_avg_rgb(img_array, x, y, radius=2):
-                """获取指定位置周围区域的平均RGB值"""
-                h, w, _ = img_array.shape
-                x_min, x_max = max(0, x-radius), min(w, x+radius+1)
-                y_min, y_max = max(0, y-radius), min(h, y+radius+1)
-                patch = img_array[y_min:y_max, x_min:x_max, :]
-                return patch.mean(axis=(0, 1)).astype(int)
-
-            # 获取取色点的RGB值
-            rgb = get_avg_rgb(img_array, x_img, y_img, radius=1)
-            hex_color = "#{:02x}{:02x}{:02x}".format(*rgb)
-
+            # 使用 Lab 空间取色
+            rgb = get_avg_rgb_lab(img_array, x_img, y_img, radius=1)
+            hex_color = rgb_to_hex(rgb)     
+            
             # 显示取色结果
             color_col1, color_col2 = st.columns([1, 20])
             with color_col1:
