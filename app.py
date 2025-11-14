@@ -184,13 +184,13 @@ with btn_cols[1]:
                 loaded = json.load(f)
             st.session_state.active_colors = loaded
             st.session_state.user_colors.update(loaded)
-            st.rerun()
+            st.experimental_rerun()
         else:
             st.warning("my_palette.json 文件不存在")
 with btn_cols[2]:
     if st.button("🧹 清空", help="清空当前调色盘"):
         st.session_state.active_colors = {}
-        st.rerun()
+        st.experimental_rerun()
 
 # 显示缩略调色盘，可点击删除
 if st.session_state.active_colors:
@@ -211,7 +211,7 @@ if st.session_state.active_colors:
             btn_clicked = st.button("×", key=f"del_{name}", help="删除该色块")
             if btn_clicked:
                 del st.session_state.active_colors[name]
-                st.rerun()
+                st.experimental_rerun()
 else:
     st.write("当前色库为空")
 
@@ -278,7 +278,7 @@ if uploaded_file:
         if st.button("🔄", help="重置画布显示", key="reset_canvas"):
             # 清理相关缓存
             process_uploaded_image.clear()
-            st.rerun()
+            st.experimental_rerun()
     with col2:
         st.markdown("💡如果画布显示异常，可点击左侧的重置按钮")
 
@@ -487,7 +487,7 @@ for name, rgb in filtered_colors.items():
             if name not in st.session_state.user_colors:
                 st.session_state.user_colors[name] = rgb
             st.session_state.active_colors[name] = rgb
-            st.rerun()
+            st.experimental_rerun()
 
 # -----------------------------
 # 联系方式与反馈
