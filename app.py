@@ -3,6 +3,7 @@ from PIL import Image
 import numpy as np
 from streamlit_drawable_canvas import st_canvas
 from skimage import color
+import colorsys
 import json
 import os
 from scipy.optimize import minimize
@@ -441,6 +442,209 @@ if uploaded_file:
             return list(top_colors), np.array(weights)
         else:
             return list(best_colors), np.array(best_weights)
+#-----------------------计算混色建议进阶算法 (测试中)-------------------------------------------
+    def suggest_mix_advanced(target_rgb, palette_source, paint_colors=None, max_candidates=6, hue_filter_n=10):
+        """
+        更高级的混色建议函数（符合画家习惯）：
+
+        - 使用色相邻近度筛选主色（先找“本色”作为基础），仅保留与目标色相接近的若干颜料。
+        - 根据亮度允许/禁止加入白色或黑色（高亮允许白色，高暗允许黑色，其余禁止）。
+        - 使用互补色（Hue+180）以小比例参与以实现降饱和/灰化效果。
+
+        输入/输出与 suggest_mix 相同：
+        - target_rgb: [r,g,b]
+        - palette_source: dict 或 文件路径
+        - paint_colors: 备选完整色库
+        - max_candidates: 最终参与优化的候选数（默认6）
+        - hue_filter_n: 用于色相筛选时保留的候选数（默认10）
+
+        返回:
+        - top_colors: [(name,[r,g,b]), ...]
+        - weights: np.array([...])
+        """
+        # 加载 palette（与 suggest_mix 保持一致的容错行为）
+        if isinstance(palette_source, str):
+            try:
+                if os.path.exists(palette_source):
+                    with open(palette_source, 'r', encoding='utf-8') as f:
+                        palette = json.load(f)
+                else:
+                    palette = {}
+            except Exception:
+                palette = {}
+        elif isinstance(palette_source, dict):
+            palette = palette_source
+        else:
+            palette = {}
+
+        if not palette:
+            palette = paint_colors or {}
+        if not isinstance(palette, dict):
+            palette = {}
+
+        # 目标颜色 HSV / 明度
+        target_rgb_norm = np.array(target_rgb, dtype=float).flatten()[:3] / 255.0
+        tr, tg, tb = target_rgb_norm[0], target_rgb_norm[1], target_rgb_norm[2]
+        th, ts, tv = colorsys.rgb_to_hsv(tr, tg, tb)  # h in [0,1]
+        target_hue = th * 360.0
+        target_val = tv  # 亮度/明度 0-1
+
+        # 计算色相角度差（环形）
+        def hue_diff(a, b):
+            d = abs(a - b) % 360.0
+            return min(d, 360.0 - d)
+
+        # 计算调色盘中每色的 Hue（度）和 HSV
+        palette_hues = []
+        for name, rgb in palette.items():
+            rgb_norm = np.array(rgb, dtype=float).flatten()[:3] / 255.0
+            r, g, b = rgb_norm[0], rgb_norm[1], rgb_norm[2]
+            h, s, v = colorsys.rgb_to_hsv(r, g, b)
+            palette_hues.append((name, list(rgb), h * 360.0, s, v))
+
+        if not palette_hues:
+            return [], np.array([])
+
+        # 按色相差距排序并取前 hue_filter_n 个作为“本色候选”
+        palette_hues_sorted = sorted(palette_hues, key=lambda x: hue_diff(target_hue, x[2]))
+        hue_candidates = palette_hues_sorted[:min(hue_filter_n, len(palette_hues_sorted))]
+
+        # 从 hue_candidates 中选择最接近目标（Lab distance）作为初始主色
+        def lab_dist(a_rgb, b_rgb):
+            la = color.rgb2lab(np.array([[a_rgb]])/255.0)[0,0]
+            lb = color.rgb2lab(np.array([[b_rgb]])/255.0)[0,0]
+            return np.linalg.norm(la-lb)
+
+        primary = min(hue_candidates, key=lambda x: lab_dist(target_rgb, x[1]))
+        primary_name, primary_rgb = primary[0], primary[1]
+
+        # 互补色规则：找调色盘中 hue 最接近 target_hue+180 的颜色
+        comp_hue = (target_hue + 180.0) % 360.0
+        comp_candidate = min(palette_hues, key=lambda x: hue_diff(comp_hue, x[2]))
+        comp_name, comp_rgb = comp_candidate[0], comp_candidate[1]
+
+        # 白/黑规则：只在亮度很高或很低时允许
+        allow_white = target_val > 0.7
+        allow_black = target_val < 0.3
+
+        # Build final candidate list: 主色 + hue_candidates（去重） + 互补色 + 白/黑（如允许）
+        candidates = []
+        # ensure primary first
+        candidates.append((primary_name, primary_rgb))
+
+        for name, rgb, h, s, v in hue_candidates:
+            if name != primary_name:
+                candidates.append((name, rgb))
+
+        # add complementary if not present
+        if comp_name not in [c[0] for c in candidates]:
+            candidates.append((comp_name, comp_rgb))
+
+        # add white/black pseudo-colors if allowed
+        if allow_white and "White" not in [c[0] for c in candidates]:
+            candidates.append(("White", [255,255,255]))
+        if allow_black and "Black" not in [c[0] for c in candidates]:
+            candidates.append(("Black", [0,0,0]))
+
+        # Trim to max_candidates (keep primary and comp if present)
+        # Ensure primary is kept by building a final list that always includes the first element
+        final_candidates = [candidates[0]]
+        for c in candidates[1:]:
+            if len(final_candidates) >= max_candidates:
+                break
+            final_candidates.append(c)
+
+        # Prepare mixing model: if white/black present, use RGB-linear mixing; otherwise use CMY as before
+        use_rgb_mixing = any(name in ("White","Black") for name,_ in final_candidates)
+
+        def rgb_to_cmy_local(rgb):
+            return 1 - np.array(rgb) / 255.0
+
+        def cmy_to_rgb_local(cmy):
+            return np.clip((1 - cmy) * 255, 0, 255).astype(int)
+
+        palette_arr = np.array([c[1] for c in final_candidates])
+
+        # Optimization: try 1~min(4,len(candidates)) colors, but always include primary (index 0)
+        best_loss = 1e9
+        best_colors = None
+        best_weights = None
+        rng = np.random.default_rng(123)
+
+        # Precompute lab of target
+        target_lab = color.rgb2lab(np.array([[target_rgb]])/255.0)[0,0]
+
+        # helper to compute mixed RGB given weights and model
+        def mixed_rgb_from_weights(w, palette_arr_local):
+            if use_rgb_mixing:
+                mixed = np.dot(w, palette_arr_local)
+                return np.clip(mixed, 0, 255).astype(int)
+            else:
+                palette_cmy = np.array([rgb_to_cmy_local(p) for p in palette_arr_local])
+                mixed_cmy = np.dot(w, palette_cmy)
+                return cmy_to_rgb_local(mixed_cmy)
+
+        max_n = min(4, len(final_candidates))
+        for n in range(1, max_n+1):
+            # iterate combinations but ensure primary (index 0) always included
+            idxs = list(range(1, len(final_candidates)))
+            from itertools import combinations as _combinations
+            for comb_tail in _combinations(idxs, n-1):
+                comb_idx = (0,) + comb_tail
+                palette_slice = palette_arr[list(comb_idx)]
+
+                def loss_fn(w):
+                    mixed = mixed_rgb_from_weights(w, palette_slice)
+                    lab_m = color.rgb2lab(np.array([[mixed]])/255.0)[0,0]
+                    return np.linalg.norm(target_lab - lab_m)
+
+                N = len(comb_idx)
+                # constraints: sum to 1, and primary weight >= primary_min (模拟画家以主色为主)
+                primary_min = 0.35 if N > 1 else 0.5
+                cons = (
+                    {'type':'eq', 'fun': lambda w: np.sum(w) - 1},
+                    {'type':'ineq', 'fun': lambda w: w[0] - primary_min}
+                )
+
+                # bounds: default (0,1) but tighten for Black (low max) and Complement (小比例)
+                bounds = []
+                names_in_comb = [final_candidates[i][0] for i in comb_idx]
+                for nm in names_in_comb:
+                    if nm == 'Black':
+                        bounds.append((0.0, 0.4))
+                    elif nm == 'White':
+                        bounds.append((0.0, 1.0))
+                    elif nm == comp_name:
+                        bounds.append((0.0, 0.22))
+                    else:
+                        bounds.append((0.0, 1.0))
+
+                for _ in range(8):
+                    w0 = rng.random(N)
+                    w0 /= w0.sum()
+                    try:
+                        res = minimize(loss_fn, w0, bounds=bounds, constraints=cons, method='SLSQP')
+                    except Exception:
+                        continue
+                    if res.success and res.fun < best_loss:
+                        best_loss = res.fun
+                        best_weights = res.x
+                        best_colors = [final_candidates[i] for i in comb_idx]
+
+            if best_loss < 2:
+                break
+
+        # fallback
+        if best_colors is None or best_weights is None:
+            return [(final_candidates[0][0], final_candidates[0][1])], np.array([1.0])
+
+        # filter tiny weights
+        filtered = [(c, w) for c, w in zip(best_colors, best_weights) if w > 0.01]
+        if filtered:
+            top_colors, weights = zip(*filtered)
+            return list(top_colors), np.array(weights)
+        else:
+            return list(best_colors), np.array(best_weights)
 #------------------------------------------------------------------
     # 顶层 RGB<->CMY 辅助函数（供展示和理论混合使用）
     def rgb_to_cmy(rgb):
@@ -485,9 +689,7 @@ if uploaded_file:
 
             # 推荐颜料：使用可复用的 suggest_mix 函数来计算 top_colors 和 weights
             palette_colors = st.session_state.active_colors if st.session_state.active_colors else paint_colors
-
-            # 调用封装好的混合建议函数（可直接迁移到其他项目使用）
-            top_colors, weights = suggest_mix(rgb, palette_colors, paint_colors=paint_colors, max_candidates=6)
+            top_colors, weights = suggest_mix(rgb, palette_colors, paint_colors=paint_colors, max_candidates=12)  # 调用封装好的混合建议函数（可直接迁移到其他项目使用）
 
             # 显示推荐结果（再次过滤非常小的权重以便展示）
             if top_colors and weights is not None:
