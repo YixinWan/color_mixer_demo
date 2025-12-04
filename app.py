@@ -321,7 +321,136 @@ if uploaded_file:
     def rgb_to_hex(rgb):
         """RGB 转 HEX"""
         return "#{:02x}{:02x}{:02x}".format(*rgb)
+
+# -------------------------计算混色建议------------------------------------------
+    def suggest_mix(target_rgb, palette_source, paint_colors=None, max_candidates=6):
+        """
+        给定目标 RGB 值和一个颜料调色盘（字典或 my_palette.json 路径），返回候选颜料名称与对应的混合权重。
+
+        输入:
+          - target_rgb: 可迭代对象，目标颜色的 RGB 值，例如 [255, 128, 0]
+          - palette_source: 字典 {name: [r,g,b], ...} 或者指向 my_palette.json 的文件路径字符串。
+          - paint_colors: 可选，完整的颜料色库（当 palette_source 为空时作为后备）。
+          - max_candidates: 从调色盘中选取最接近的候选颜色数（默认 6）。
+
+        输出:
+          - top_colors: 列表，形如 [(name, [r,g,b]), ...]（按顺序为权重对应顺序）
+          - weights: numpy 数组，对应于 top_colors 的比例（归一化和过滤掉很小的权重）
+
+        注: 该函数是独立且自包含的，内部使用Lab空间作为色差度量，在CMY空间进行线性混色模拟，并尝试 1~4 色的线性混合优化。
+        """
+        # 规范化并加载 palette
+        if isinstance(palette_source, str):
+            try:
+                if os.path.exists(palette_source):
+                    with open(palette_source, 'r', encoding='utf-8') as f:
+                        palette = json.load(f)
+                else:
+                    palette = {}
+            except Exception:
+                palette = {}
+        elif isinstance(palette_source, dict):
+            palette = palette_source
+        else:
+            palette = {}
+
+        if not palette:
+            palette = paint_colors or {}
+
+        # 保证 palette 是 dict
+        if not isinstance(palette, dict):
+            palette = {}
+
+        # 计算 Lab 色差的辅助函数（在函数内部自包含，方便迁移）
+        def delta_e_local(rgb1, rgb2):
+            lab1 = color.rgb2lab(np.array([[rgb1]])/255.0)[0, 0]
+            lab2 = color.rgb2lab(np.array([[rgb2]])/255.0)[0, 0]
+            return np.linalg.norm(lab1 - lab2)
+
+        # 选择最接近的候选颜色
+        try:
+            sorted_items = sorted(palette.items(), key=lambda item: delta_e_local(target_rgb, item[1]))
+        except Exception:
+            sorted_items = list(palette.items())
+
+        candidate_colors = sorted_items[:max_candidates]
+
+        def rgb_to_cmy_local(rgb):
+            return 1 - np.array(rgb) / 255.0
+
+        def cmy_to_rgb_local(cmy):
+            return np.clip((1 - cmy) * 255, 0, 255).astype(int)
+
+        # 单色优先检查
+        best_loss = 1e9
+        best_colors = None
+        best_weights = None
+
+        for name, rgb_paint in candidate_colors:
+            loss = delta_e_local(target_rgb, rgb_paint)
+            if loss < best_loss:
+                best_loss = loss
+                best_colors = [(name, rgb_paint)]
+                best_weights = np.array([1.0])
+
+        # 如果单色已经足够接近则直接返回（阈值可调）
+        if best_loss < 3:
+            return best_colors, best_weights
+
+        rng = np.random.default_rng(42)
+
+        # 尝试 2~4 色组合的线性混合（CMY 空间混合）
+        for n in range(2, 5):
+            for comb in itertools.combinations(candidate_colors, n):
+                palette_cmy = np.array([rgb_to_cmy_local(c[1]) for c in comb])
+
+                def loss(w):
+                    mixed_cmy = np.dot(w, palette_cmy) # 线性混合模拟颜料混色 CMYmix​=w1​⋅CMY1​+w2​⋅CMY2​+...+wn​⋅CMYn​
+                    mixed_rgb = cmy_to_rgb_local(mixed_cmy)
+                    lab1 = color.rgb2lab(np.array([[target_rgb]])/255.0)[0, 0]
+                    lab2 = color.rgb2lab(np.array([[mixed_rgb]])/255.0)[0, 0]
+                    return np.linalg.norm(lab1 - lab2)
+
+                N = len(comb)
+                cons = ({'type': 'eq', 'fun': lambda w: np.sum(w) - 1})
+                bounds = [(0, 1)] * N
+
+                for _ in range(6): # 多次（6次）随机初始化以避免局部最优
+                    w0 = rng.random(N)
+                    w0 /= w0.sum()
+                    try:
+                        res = minimize(loss, w0, bounds=bounds, constraints=cons, method='SLSQP')
+                    except Exception:
+                        continue
+                    if res.success and res.fun < best_loss:
+                        best_loss = res.fun
+                        best_weights = res.x
+                        best_colors = comb
+
+            if best_loss < 2:
+                break
+
+        # 如果没有找到（极少情况），回退到最接近的单色
+        if best_colors is None or best_weights is None:
+            return [(sorted_items[0][0], sorted_items[0][1])], np.array([1.0])
+
+        # 过滤掉极小权重并返回
+        filtered = [(c, w) for c, w in zip(best_colors, best_weights) if w > 0.01]
+        if filtered:
+            top_colors, weights = zip(*filtered)
+            return list(top_colors), np.array(weights)
+        else:
+            return list(best_colors), np.array(best_weights)
 #------------------------------------------------------------------
+    # 顶层 RGB<->CMY 辅助函数（供展示和理论混合使用）
+    def rgb_to_cmy(rgb):
+        """将 RGB(0-255) 转到 CMY（0-1）"""
+        return 1 - np.array(rgb) / 255.0
+
+    def cmy_to_rgb(cmy):
+        """将 CMY（0-1）转换回 RGB(0-255) 整数数组"""
+        return np.clip((1 - cmy) * 255, 0, 255).astype(int)
+
     st.markdown("<div style='color:#fa8c16;font-size:16px;margin:8px 0 0 0;'><b>提示：</b>点击画布任意位置即可取色</div>", unsafe_allow_html=True)
 
     st.header("🎯 取色结果")
@@ -354,75 +483,19 @@ if uploaded_file:
                 st.markdown(f"**🎨 RGB值：** {rgb}")
                 st.markdown(f"**🔖 HEX值：** {hex_color}")
 
-            # 推荐颜料部分保持不变
+            # 推荐颜料：使用可复用的 suggest_mix 函数来计算 top_colors 和 weights
             palette_colors = st.session_state.active_colors if st.session_state.active_colors else paint_colors
 
-            def delta_e(rgb1, rgb2):
-                """计算两个RGB颜色之间的色差"""
-                lab1 = color.rgb2lab(np.array([[rgb1]])/255.0)[0, 0]
-                lab2 = color.rgb2lab(np.array([[rgb2]])/255.0)[0, 0]
-                return np.linalg.norm(lab1 - lab2)
+            # 调用封装好的混合建议函数（可直接迁移到其他项目使用）
+            top_colors, weights = suggest_mix(rgb, palette_colors, paint_colors=paint_colors, max_candidates=6)
 
-            closest = sorted(palette_colors.items(), key=lambda item: delta_e(rgb, item[1]))
-            candidate_colors = closest[:6]
-
-            def rgb_to_cmy(rgb):
-                return 1 - np.array(rgb) / 255.0
-
-            def cmy_to_rgb(cmy):
-                return np.clip((1 - cmy) * 255, 0, 255).astype(int)
-
-            # Step 1: 单色检查
-            best_loss = 1e9
-            best_colors, best_weights = None, None
-            rng = np.random.default_rng(42)
-
-            for name, rgb_paint in candidate_colors:
-                lab1 = color.rgb2lab(np.array([[rgb]])/255.0)[0, 0]
-                lab2 = color.rgb2lab(np.array([[rgb_paint]])/255.0)[0, 0]
-                loss = np.linalg.norm(lab1 - lab2)
-                if loss < best_loss:
-                    best_loss = loss
-                    best_colors = [(name, rgb_paint)]
-                    best_weights = np.array([1.0])
-
-            # 如果单色已经很接近，可以直接返回（阈值可以调整，比如2~3）
-            if best_loss < 3:
-                pass  # 直接用 best_colors, best_weights
-            else:
-                # Step 2~3: 扩展到 2~4 色组合
-                for n in range(2, 5):
-                    for comb in itertools.combinations(candidate_colors, n):
-                        palette_cmy = np.array([rgb_to_cmy(c) for _, c in comb])
-
-                        def loss(w):
-                            mixed_cmy = np.dot(w, palette_cmy)
-                            mixed_rgb = cmy_to_rgb(mixed_cmy)
-                            lab1 = color.rgb2lab(np.array([[rgb]])/255.0)[0, 0]
-                            lab2 = color.rgb2lab(np.array([[mixed_rgb]])/255.0)[0, 0]
-                            return np.linalg.norm(lab1 - lab2)
-
-                        N = len(comb)
-                        cons = ({'type': 'eq', 'fun': lambda w: np.sum(w) - 1})
-                        bounds = [(0, 1)] * N
-
-                        for _ in range(6):  # 减少随机重启次数
-                            w0 = rng.random(N)
-                            w0 /= w0.sum()
-                            res = minimize(loss, w0, bounds=bounds, constraints=cons, method='SLSQP')
-                            if res.success and res.fun < best_loss:
-                                best_loss = res.fun
-                                best_weights = res.x
-                                best_colors = comb
-
-                    # 如果在 n 色组合中已经找到很好结果，可以提前停止
-                    if best_loss < 2:
-                        break
-             # 显示推荐结果
-            if best_colors and best_weights is not None:
-                filtered = [(c, w) for c, w in zip(best_colors, best_weights) if w > 0.05]
+            # 显示推荐结果（再次过滤非常小的权重以便展示）
+            if top_colors and weights is not None:
+                weights = np.array(weights)
+                filtered = [(c, w) for c, w in zip(top_colors, weights) if w > 0.01]
                 if filtered:
                     top_colors, weights = zip(*filtered)
+                    top_colors = list(top_colors)
                     weights = np.array(weights)
 
                     st.header("🖌️ 推荐油画颜料及混合比例")
@@ -436,7 +509,7 @@ if uploaded_file:
                             </div>''', unsafe_allow_html=True)
                     st.markdown('</div>', unsafe_allow_html=True)
 
-                    # 混合后理论色块
+                    # 混合后理论色块（使用全局的 rgb_to_cmy / cmy_to_rgb）
                     palette_cmy_used = np.array([rgb_to_cmy(c[1]) for c in top_colors])
                     mixed_cmy = np.dot(weights, palette_cmy_used)
                     mixed_rgb = cmy_to_rgb(mixed_cmy)
