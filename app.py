@@ -297,8 +297,7 @@ if uploaded_file:
         key=canvas_key,
     )
     
-# -----------------------------------------------------------------------------------
-    # ============ 新的函数：Lab空间取色 ============
+# ---------------------Lab空间取色函数--------------------------------------------------------------
     def get_avg_rgb_lab(img_array, x, y, radius=10):
         """
         在 Lab 空间取邻域平均，再转回 RGB
@@ -323,7 +322,7 @@ if uploaded_file:
         """RGB 转 HEX"""
         return "#{:02x}{:02x}{:02x}".format(*rgb)
 
-# -------------------------计算混色建议------------------------------------------
+# -------------------------计算混色建议函数------------------------------------------
     def suggest_mix(target_rgb, palette_source, paint_colors=None, max_candidates=6):
         """
         给定目标 RGB 值和一个颜料调色盘（字典或 my_palette.json 路径），返回候选颜料名称与对应的混合权重。
@@ -442,7 +441,7 @@ if uploaded_file:
             return list(top_colors), np.array(weights)
         else:
             return list(best_colors), np.array(best_weights)
-#-----------------------计算混色建议进阶算法 (测试中)-------------------------------------------
+#-----------------------计算混色建议函数-进阶算法 (测试中)-------------------------------------------
     def suggest_mix_advanced(target_rgb, palette_source, paint_colors=None, max_candidates=6, hue_filter_n=10):
         """
         更高级的混色建议函数（符合画家习惯）：
@@ -645,8 +644,7 @@ if uploaded_file:
             return list(top_colors), np.array(weights)
         else:
             return list(best_colors), np.array(best_weights)
-#------------------------------------------------------------------
-    # 顶层 RGB<->CMY 辅助函数（供展示和理论混合使用）
+#---------------顶层 RGB<->CMY 辅助函数-------------------------------------------
     def rgb_to_cmy(rgb):
         """将 RGB(0-255) 转到 CMY（0-1）"""
         return 1 - np.array(rgb) / 255.0
@@ -654,30 +652,43 @@ if uploaded_file:
     def cmy_to_rgb(cmy):
         """将 CMY（0-1）转换回 RGB(0-255) 整数数组"""
         return np.clip((1 - cmy) * 255, 0, 255).astype(int)
-
-    def small_integer_approx(weights, max_total=15):
+#-----------------------生成分步调色数据函数-------------------------------------------
+    def generate_steps_from_mix(top_colors, weights, max_total=15):
         """
-        将一组归一化权重近似为小整数份数，使得分数 counts/sum(counts)
-        最接近原始权重，且所有份数之和不超过 max_total。使用穷举搜索，适用于 len(weights) 较小（通常 <=4）的场景。
+        纯逻辑函数（无任何 UI 依赖）：给定 suggest_mix 的输出（top_colors 和 weights），
+        生成分步调色数据。内部集成小整数近似。
 
         参数:
-          - weights: 归一化的权重数组
+          - top_colors: 列表，形如 [(name,[r,g,b]), ...]，应按权重降序排列
+          - weights: 与 top_colors 对应的权重数组/列表（不必归一化）
           - max_total: 所有份数之和的上限（默认 15）
 
-        返回整数列表 counts，长度与 weights 相同。
+        返回:
+          - 步骤列表，每项为字典：
+            {
+              'step_num': 步骤编号（从1开始）,
+              'parts': 当前步骤各颜色份数列表,
+              'names': 当前步骤各颜色名称列表,
+              'rgbs': 当前步骤各颜色RGB列表,
+              'mixed_hex': 混合后的HEX字符串 '#rrggbb'
+            }
+
+        说明：主色（第一个）份数固定，次要颜料逐份增加（1份, 2份, ...）
         """
+        if not top_colors or weights is None:
+            return []
+
         w = np.array(weights, dtype=float)
         if w.size == 0:
             return []
-        if w.size == 1:
-            return [1]
 
-        # 归一化（防止传入非标准权重）
-        w = w / w.sum()
-        k = w.size
+        # 归一化权重
+        w_normalized = w / w.sum()
 
-        best = None
-        best_err = float('inf')
+        # ========== 内联的小整数近似逻辑 ==========
+        counts_best = None
+        counts_best_err = float('inf')
+        k = w_normalized.size
 
         # 穷举所有可能的份数组合（每项从1到max_total，且总和不超过max_total）
         import itertools as _it
@@ -688,16 +699,16 @@ if uploaded_file:
             if total > max_total:
                 continue
             fracs = counts / total
-            err = np.sum((fracs - w) ** 2)  # 最小二乘误差
-            if err < best_err:
-                best_err = err
-                best = counts.astype(int).tolist()
+            err = np.sum((fracs - w_normalized) ** 2)  # 最小二乘误差
+            if err < counts_best_err:
+                counts_best_err = err
+                counts_best = counts.astype(int).tolist()
                 # 若误差已经非常小则可以提前退出
-                if best_err < 1e-6:
+                if counts_best_err < 1e-6:
                     break
 
         # 若没有找到满足约束的组合，降低上限并重试
-        if best is None:
+        if counts_best is None:
             for relaxed_total in range(max_total - 1, 0, -1):
                 for combo in _it.product(range(1, relaxed_total + 1), repeat=k):
                     counts = np.array(combo, dtype=float)
@@ -705,27 +716,71 @@ if uploaded_file:
                     if total > relaxed_total:
                         continue
                     fracs = counts / total
-                    err = np.sum((fracs - w) ** 2)
-                    if err < best_err:
-                        best_err = err
-                        best = counts.astype(int).tolist()
-                if best is not None:
+                    err = np.sum((fracs - w_normalized) ** 2)
+                    if err < counts_best_err:
+                        counts_best_err = err
+                        counts_best = counts.astype(int).tolist()
+                if counts_best is not None:
                     break
 
         # 若仍未找到，退回到简单缩放方案
-        if best is None:
-            total = min(max_total, max(1, int(round(1.0 / np.min(w)))))
-            raw = (w * total).round().astype(int)
+        if counts_best is None:
+            total = min(max_total, max(1, int(round(1.0 / np.min(w_normalized)))))
+            raw = (w_normalized * total).round().astype(int)
             raw[raw < 1] = 1
             if raw.sum() > max_total:
                 # 超过限制时，按比例缩放
                 scale = raw.sum() / max_total
                 raw = (raw / scale).round().astype(int)
                 raw[raw < 1] = 1
-            return raw.tolist()
+            counts_best = raw.tolist()
 
-        return best
+        # ========== 生成步骤 ==========
+        steps = []
+        primary_count = int(counts_best[0])
+        secondary_counts = [int(c) for c in counts_best[1:]]
 
+        step_num = 0
+
+        # 逐步加入次要颜料：主色份数固定，其他颜料逐个增加
+        for sec_idx, sec_target in enumerate(secondary_counts):
+            for sec_cur in range(1, int(sec_target) + 1):
+                step_num += 1
+                parts = [primary_count]
+                color_indices = [0]
+
+                # 前 sec_idx 种次要颜料使用其目标份数
+                for i in range(sec_idx):
+                    parts.append(int(secondary_counts[i]))
+                    color_indices.append(i + 1)
+
+                # 当前次要颜料（第 sec_idx 种）使用 sec_cur
+                parts.append(int(sec_cur))
+                color_indices.append(sec_idx + 1)
+
+                names = [top_colors[i][0] for i in color_indices]
+                rgbs = [top_colors[i][1] for i in color_indices]
+
+                # 计算混合 RGB（使用 CMY 模型）
+                parts_arr = np.array(parts, dtype=float)
+                parts_w = parts_arr / parts_arr.sum()
+                palette_cmy = np.array([rgb_to_cmy(rgb) for rgb in rgbs])
+                mixed_cmy = np.dot(parts_w, palette_cmy)
+                mixed_rgb = cmy_to_rgb(mixed_cmy)
+                mixed_hex = "#{:02x}{:02x}{:02x}".format(*mixed_rgb)
+
+                steps.append({
+                    'step_num': step_num,
+                    'parts': parts,
+                    'names': names,
+                    'rgbs': rgbs,
+                    'mixed_hex': mixed_hex,
+                })
+
+        return steps
+
+
+#-----------------------------------------------------------------------------------
     st.markdown("<div style='color:#fa8c16;font-size:16px;margin:8px 0 0 0;'><b>提示：</b>点击画布任意位置即可取色</div>", unsafe_allow_html=True)
 
     st.header("🎯 取色结果")
@@ -811,89 +866,47 @@ if uploaded_file:
                         """,
                         unsafe_allow_html=True
                     )
-                    # =========== 分步混合指导（逐步加入次要颜料，便于手工调色） ===========
+                    # =========== 分步混合指导 ===========
                     try:
                         if len(top_colors) > 1:
                             st.subheader("🧭 分步调色指导")
-                            # 按权重排序（已按权重顺序），主色为第一个
-                            # 使用小整数近似将权重转换为可手工混合的份数（每项在 1..9 之间，总和不超过 10，尽量贴近原始比例）
-                            w_arr = np.array(weights, dtype=float)
-                            # 计算整数份数，尽量使 counts/sum(counts) 接近权重，同时约束总和 <= 10
-                            counts = small_integer_approx(w_arr, max_total=10)
-                            # 如果某些份数仍然太大（展示长度问题），对所有份数统一缩放以便展示
-                            display_cap = 20
-                            scale_note = ""
-                            if max(counts) > display_cap:
-                                # 以比例缩放并保证每项至少为1
-                                scale = max(1, int(np.ceil(max(counts) / display_cap)))
-                                counts = [max(1, int(round(c / scale))) for c in counts]
-                                scale_note = "（已缩放份数以便展示，原始比例更大）"
-
-                            st.markdown(f"<div style='margin:8px 0 6px 0;color:#666;font-size:13px;'>{scale_note}</div>", unsafe_allow_html=True)
-                            st.markdown('<div style="display:flex;flex-direction:column;gap:6px;margin:4px 0 10px 0;">', unsafe_allow_html=True)
-                            # 在步骤列表上方只显示一次“预期混色效果”标题（右侧列）
-                            st.markdown(
-                                '''<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
-                                        <div style='display:flex;align-items:center;gap:6px;flex:1;'>
-                                            <div style="font-size:14px;color:#333;min-width:60px;"></div>
-                                            <div></div>
-                                        </div>
-                                        <div style="text-align:right;min-width:80px;">
-                                            <div style="font-size:12px;font-weight:600;color:#333;">预期混色效果</div>
-                                        </div>
-                                    </div>''',
-                                unsafe_allow_html=True,
-                            )
-
-                            # 逐步加入次要颜料：主色份数固定为 counts[0]，其他颜料逐个增加（1份, 2份, 3份, ...）
-                            primary_count = counts[0]
-                            secondary_counts = counts[1:]  # 次要颜料的目标份数
                             
-                            # 总步数 = 每种次要颜料从 1 增加到其目标份数的步骤累计
-                            step_num = 0  # 步骤计数器
-                            for sec_idx, sec_target in enumerate(secondary_counts):
-                                # 对于当前次要颜料，从 1 到 sec_target 逐步增加
-                                for sec_cur in range(1, int(sec_target) + 1):
-                                    step_num += 1
-                                    # 构建当前步骤的份数列表：主色 + 前 sec_idx+1 种次要颜料（其中最后一种为 sec_cur，之前的为满值）
-                                    parts = [primary_count]
-                                    color_indices = [0]  # 始终包括主色（index 0）
+                            # 调用纯逻辑函数生成步骤数据
+                            steps = generate_steps_from_mix(top_colors, weights, max_total=15)
+                            
+                            if steps:
+                                st.markdown('<div style="display:flex;flex-direction:column;gap:6px;margin:4px 0 10px 0;">', unsafe_allow_html=True)
+                                # 显示"预期混色效果"标题
+                                st.markdown(
+                                    '''<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
+                                            <div style='display:flex;align-items:center;gap:6px;flex:1;'>
+                                                <div style="font-size:14px;color:#333;min-width:60px;"></div>
+                                            </div>
+                                            <div style="text-align:right;min-width:80px;">
+                                                <div style="font-size:12px;font-weight:600;color:#333;">预期混色效果</div>
+                                            </div>
+                                        </div>''',
+                                    unsafe_allow_html=True,
+                                )
+                                
+                                # 渲染每一步
+                                for step in steps:
+                                    step_num = step['step_num']
+                                    parts = step['parts']
+                                    names = step['names']
+                                    rgbs = step['rgbs']
+                                    mixed_hex_step = step['mixed_hex']
                                     
-                                    # 对于前 sec_idx 种次要颜料，使用其目标份数
-                                    for i in range(sec_idx):
-                                        parts.append(int(secondary_counts[i]))
-                                        color_indices.append(i + 1)
-                                    
-                                    # 对于当前次要颜料（第 sec_idx 种），使用 sec_cur（从 1 到 sec_target 递增）
-                                    parts.append(int(sec_cur))
-                                    color_indices.append(sec_idx + 1)
-                                    
-                                    names = [top_colors[i][0] for i in color_indices]
-                                    rgbs = [top_colors[i][1] for i in color_indices]
-                                    
-                                    # 计算理论混色（使用 CMY 模型）
-                                    parts_arr = np.array(parts, dtype=float)
-                                    parts_w = parts_arr / parts_arr.sum()
-                                    palette_cmy = np.array([rgb_to_cmy(rgb) for rgb in rgbs])
-                                    mixed_cmy_step = np.dot(parts_w, palette_cmy)
-                                    mixed_rgb_step = cmy_to_rgb(mixed_cmy_step)
-                                    mixed_hex_step = "#{:02x}{:02x}{:02x}".format(*mixed_rgb_step)
-
-                                    # 把每种颜色的色块和份数字符串化为一个组，并用加号连接
+                                    # 构造颜色组 HTML
                                     group_htmls = []
-                                    for idx, (p, rgb_, nm) in enumerate(zip(parts, rgbs, names)):
-                                        # p 已为整数份数
-                                        count = int(max(1, int(round(p))))
-                                        # 限制每类块的最大个数以免太长
+                                    for count, rgb_, nm in zip(parts, rgbs, names):
+                                        count = int(max(1, int(round(count))))
                                         max_blocks = 12
                                         display_count = min(count, max_blocks)
-                                        # 色块尺寸改大一些，便于视觉辨识
                                         blocks = ''.join([
                                             f"<div style='width:28px;height:28px;border-radius:4px;background:rgb{tuple(rgb_)};margin-right:4px;border:1px solid #ddd;'></div>"
                                             for _ in range(display_count)
                                         ])
-                                        suffix = f"<span style='font-size:12px;color:#999;margin-left:6px;'>x{count}</span>" if count > max_blocks else ''
-                                        # 每组：上方为名称（左对齐），下面为色块（左对齐），色块右侧显示份数（徽章样式）
                                         group_html = (
                                             f"<div style='display:flex;flex-direction:column;align-items:flex-start;min-width:130px;margin-right:8px;'>"
                                             f"<div style='font-size:12px;color:#333;margin-bottom:4px;text-align:left;width:100%;'>{nm}</div>"
@@ -904,29 +917,27 @@ if uploaded_file:
                                             f"</div>"
                                         )
                                         group_htmls.append(group_html)
-
-                                    # 更显眼且垂直居中的加号分隔符
+                                    
                                     plus = "<div style='display:flex;align-items:center;justify-content:center;width:30px;font-size:18px;color:#fa8c16;font-weight:700;margin:0 6px;'>+</div>"
                                     swatches_html = ''.join([g if i == 0 else plus + g for i, g in enumerate(group_htmls)])
-
-                                    # 父容器：左侧为步骤与色块（左对齐），右侧为混合结果（右对齐）
+                                    
                                     st.markdown(
                                         f'''<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
                                                 <div style='display:flex;align-items:center;gap:6px;flex:1;'>
                                                     <div style="font-size:14px;color:#333;min-width:60px;">第{step_num}步：</div>
                                                     <div style='display:flex;align-items:center;overflow:auto;'>{swatches_html}</div>
                                                 </div>
-                                                <div style="text-align:left;min-width:8px;">
+                                                <div style="text-align:right;min-width:80px;">
                                                     <div style="width:48px;height:24px;border-radius:6px;background:{mixed_hex_step};border:1px solid #ccc;margin-left:auto;"></div>
                                                     <div style="font-size:12px;color:#666;margin-top:4px;">{mixed_hex_step}</div>
                                                 </div>
                                             </div>''',
                                         unsafe_allow_html=True,
                                     )
-
-                            st.markdown('</div>', unsafe_allow_html=True)
-                        else:
-                            st.markdown('<div style="margin-top:8px;color:#666;">单色即可，无需分步混合。</div>', unsafe_allow_html=True)
+                                
+                                st.markdown('</div>', unsafe_allow_html=True)
+                            else:
+                                st.markdown('<div style="margin-top:8px;color:#666;">单色即可，无需分步混合。</div>', unsafe_allow_html=True)
                     except Exception:
                         # 若展示步骤失败，不影响主流程
                         pass
